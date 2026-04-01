@@ -13,9 +13,12 @@ warnings.filterwarnings('ignore', message='.*TensorFlow Addons.*')
 warnings.filterwarnings('ignore', message='.*InsecureRequestWarning.*')
 
 import tensorflow as tf
+import logging
+tf.get_logger().setLevel(logging.ERROR)
+
 from tensorflow_addons.text.crf import crf_decode, crf_log_likelihood
 
-# 关闭eager模式
+# 关闭 eager 模式
 tf.compat.v1.disable_eager_execution()
 tf.compat.v1.experimental.output_all_intermediates(True)
 

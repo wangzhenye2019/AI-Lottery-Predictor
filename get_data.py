@@ -15,10 +15,6 @@ from config import name_path, data_file_name
 warnings.filterwarnings('ignore', message='.*InsecureRequestWarning.*')
 requests.packages.urllib3.disable_warnings()
 
-parser = argparse.ArgumentParser()
-parser.add_argument('--name', default="ssq", type=str, help="选择爬取数据: 双色球/大乐透")
-args = parser.parse_args()
-
 
 def get_url(name):
     """
@@ -135,6 +131,10 @@ def run(name):
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--name', default="ssq", type=str, help="选择爬取数据: 双色球/大乐透")
+    args = parser.parse_args()
+    
     if not args.name:
         logger.error("玩法名称不能为空！")
     else:

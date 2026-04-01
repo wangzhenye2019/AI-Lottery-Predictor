@@ -1,0 +1,54 @@
+# IDEs
+.idea/
+.vscode/
+*.swp
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+.env
+.venv
+env.bak/
+venv.bak/
+
+# Project specific
+model/
+data/
+analysis_output/
+releases/
+*.ckpt
+*.ckpt.meta
+*.ckpt.index
+*.ckpt.data*
+checkpoint
+*.zip
+*.tar.gz
+*.sha256
+*.spec
+
+# Logs
+logs/
+*.log
+nul

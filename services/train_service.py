@@ -51,7 +51,8 @@ class TrainService:
         if not len(data):
             raise DataValidationError("数据为空，请执行 get_data.py 进行数据下载")
         
-        data = data.iloc[:, 2:].values
+        # 丢弃第 0 列(期号)，保留所有红球和蓝球
+        data = data.iloc[:, 1:].values
         log.info(f"训练集数据维度：{data.shape}")
         
         x_data, y_data = [], []
@@ -62,14 +63,20 @@ class TrainService:
         
         cut_num = 6 if self.name == "ssq" else 5
         
+        x_data = np.array(x_data)
+        y_data = np.array(y_data)
+        
+        log.info(f"x_data original shape: {x_data.shape}")
+        log.info(f"y_data original shape: {y_data.shape}")
+        
         return {
             "red": {
-                "x_data": np.array(x_data)[:, :, :cut_num],
-                "y_data": np.array(y_data)[:, :cut_num]
+                "x_data": x_data[:, :, :cut_num],
+                "y_data": y_data[:, :cut_num]
             },
             "blue": {
-                "x_data": np.array(x_data)[:, :, cut_num:],
-                "y_data": np.array(y_data)[:, cut_num:]
+                "x_data": x_data[:, :, cut_num:],
+                "y_data": y_data[:, cut_num:]
             }
         }
     
@@ -161,7 +168,7 @@ class TrainService:
             # 构建优化器
             if use_lr_decay:
                 global_step = tf.Variable(0, trainable=False)
-                learning_rate = tf.train.exponential_decay(
+                learning_rate = tf.compat.v1.train.exponential_decay(
                     initial_lr, global_step, decay_steps=100,
                     decay_rate=decay_rate, staircase=True
                 )
@@ -208,18 +215,25 @@ class TrainService:
                     epoch_losses.append(loss_)
                     
                     if i == 0 or (i // batch_size) % 10 == 0:
+                        pred_nums = pred[0] + 1
+                        true_nums = batch_y[0] + 1
+                        
+                        # 检查是否完全匹配
+                        is_exact_match = np.array_equal(np.sort(pred_nums), np.sort(true_nums))
+                        match_str = " ✅ 完全正确" if is_exact_match else ""
+                        
                         log.info(
                             f"Epoch {epoch}, Step {i}/{train_len}: "
                             f"loss={loss_:.4f}, "
-                            f"true={batch_y[0] + 1}, "
-                            f"pred={pred[0] + 1}"
+                            f"true={true_nums}, "
+                            f"pred={pred_nums}{match_str}"
                         )
                 
                 avg_loss = np.mean(epoch_losses)
                 log.info(f"Epoch {epoch} 完成，平均 loss: {avg_loss:.4f}")
                 
                 # 早停检查
-                if use_optimization and use_early_stopping:
+                if use_optimization:
                     if avg_loss < best_loss:
                         best_loss = avg_loss
                         patience_counter = 0
@@ -283,7 +297,11 @@ class TrainService:
         train_len = x_train.shape[0]
         
         if self.name == "ssq":
-            x_train = x_train.reshape(len(x_train), m_args["model_args"]["windows_size"])
+            # For blue ball SSQ, x_train has shape (batch_size, windows_size, 1) currently from create_data
+            # Let's use reshape to safely flatten the last dimensions
+            x_train = x_train.reshape((train_len, m_args["model_args"]["windows_size"]))
+            # y_train originally shape is (train_len, 1), so flatten it first
+            y_train = y_train.flatten()
             y_train = tf.keras.utils.to_categorical(
                 y_train - 1, num_classes=m_args["model_args"]["blue_n_class"]
             )
@@ -297,7 +315,9 @@ class TrainService:
         test_len = x_test.shape[0]
         
         if self.name == "ssq":
-            x_test = x_test.reshape(len(x_test), m_args["model_args"]["windows_size"])
+            x_test = x_test.reshape((test_len, m_args["model_args"]["windows_size"]))
+            # y_test originally shape is (test_len, 1), so flatten it first
+            y_test = y_test.flatten()
             y_test = tf.keras.utils.to_categorical(
                 y_test - 1, num_classes=m_args["model_args"]["blue_n_class"]
             )
@@ -339,7 +359,7 @@ class TrainService:
             # 构建优化器
             if use_lr_decay:
                 global_step = tf.Variable(0, trainable=False)
-                learning_rate = tf.train.exponential_decay(
+                learning_rate = tf.compat.v1.train.exponential_decay(
                     initial_lr, global_step, decay_steps=100,
                     decay_rate=decay_rate, staircase=True
                 )
@@ -383,11 +403,17 @@ class TrainService:
                             }
                         )
                         if i == 0 or (i // batch_size) % 10 == 0:
+                            pred_nums = pred[0] + 1
+                            true_nums = np.argmax(batch_y[0]) + 1
+                            
+                            is_exact_match = (pred_nums == true_nums)
+                            match_str = " ✅ 完全正确" if is_exact_match else ""
+                            
                             log.info(
                                 f"Epoch {epoch}, Step {i}/{train_len}: "
                                 f"loss={loss_:.4f}, "
-                                f"true={np.argmax(batch_y[0]) + 1}, "
-                                f"pred={pred[0] + 1}"
+                                f"true={true_nums}, "
+                                f"pred={pred_nums}{match_str}"
                             )
                     else:
                         _, loss_, pred = sess.run(
@@ -399,11 +425,17 @@ class TrainService:
                             }
                         )
                         if i == 0 or (i // batch_size) % 10 == 0:
+                            pred_nums = pred[0] + 1
+                            true_nums = batch_y[0] + 1
+                            
+                            is_exact_match = np.array_equal(np.sort(pred_nums), np.sort(true_nums))
+                            match_str = " ✅ 完全正确" if is_exact_match else ""
+                            
                             log.info(
                                 f"Epoch {epoch}, Step {i}/{train_len}: "
                                 f"loss={loss_:.4f}, "
-                                f"true={batch_y[0] + 1}, "
-                                f"pred={pred[0] + 1}"
+                                f"true={true_nums}, "
+                                f"pred={pred_nums}{match_str}"
                             )
                     
                     epoch_losses.append(loss_)
@@ -412,7 +444,7 @@ class TrainService:
                 log.info(f"Epoch {epoch} 完成，平均 loss: {avg_loss:.4f}")
                 
                 # 早停检查
-                if use_optimization and use_early_stopping:
+                if use_optimization:
                     if avg_loss < best_loss:
                         best_loss = avg_loss
                         patience_counter = 0
@@ -442,8 +474,12 @@ class TrainService:
                 test_len, sequence_len, ball_type="blue"
             )
     
-    def _save_model(self, saver: tf.compat.v1.train.Saver, 
-                    sess: tf.compat.v1.Session, ball_type: str) -> None:
+    def _save_model(
+        self, 
+        saver: tf.compat.v1.train.Saver, 
+        sess: tf.compat.v1.Session, 
+        ball_type: str
+    ) -> None:
         """保存模型"""
         model_path_str = model_args[self.name]["path"][ball_type]
         model_name = f"{ball_type}_ball_model"
@@ -549,6 +585,8 @@ class TrainService:
         
         # 训练蓝球模型
         log.info(f"开始训练【{name_path[self.name]['name']}】蓝球模型...")
+        log.info(f"蓝球训练数据 x_data shape: {train_data['blue']['x_data'].shape}")
+        
         self.train_blue_ball(
             x_train=train_data["blue"]["x_data"],
             y_train=train_data["blue"]["y_data"],
