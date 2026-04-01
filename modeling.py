@@ -2,6 +2,16 @@
 """
 Author: BigCat
 """
+import warnings
+import os
+
+# 抑制 TensorFlow 和 TFA 的警告信息（不影响功能）
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # 只显示 ERROR 级别日志
+warnings.filterwarnings('ignore', category=UserWarning, module='tensorflow_addons')
+warnings.filterwarnings('ignore', message='.*deprecated.*')
+warnings.filterwarnings('ignore', message='.*TensorFlow Addons.*')
+warnings.filterwarnings('ignore', message='.*InsecureRequestWarning.*')
+
 import tensorflow as tf
 from tensorflow_addons.text.crf import crf_decode, crf_log_likelihood
 
@@ -16,13 +26,13 @@ class LstmWithCRFModel(object):
 
     def __init__(self, batch_size, n_class, ball_num, w_size, embedding_size, words_size, hidden_size, layer_size):
         self._inputs = tf.keras.layers.Input(
-            shape=(w_size, ball_num), batch_size=batch_size, name="inputs"
+            shape=(w_size, ball_num), name="inputs"
         )
         self._tag_indices = tf.keras.layers.Input(
-            shape=(ball_num, ), batch_size=batch_size, dtype=tf.int32, name="tag_indices"
+            shape=(ball_num, ), dtype=tf.int32, name="tag_indices"
         )
         self._sequence_length = tf.keras.layers.Input(
-            shape=(), batch_size=batch_size, dtype=tf.int32, name="sequence_length"
+            shape=(), dtype=tf.int32, name="sequence_length"
         )
         # 构建特征抽取
         embedding = tf.keras.layers.Embedding(words_size, embedding_size)(self._inputs)
@@ -79,10 +89,10 @@ class SignalLstmModel(object):
 
     def __init__(self, batch_size, n_class, w_size, embedding_size, hidden_size, outputs_size, layer_size):
         self._inputs = tf.keras.layers.Input(
-            shape=(w_size, ), batch_size=batch_size, dtype=tf.int32, name="inputs"
+            shape=(w_size, ), dtype=tf.int32, name="inputs"
         )
         self._tag_indices = tf.keras.layers.Input(
-            shape=(n_class, ), batch_size=batch_size, dtype=tf.float32, name="tag_indices"
+            shape=(n_class, ), dtype=tf.float32, name="tag_indices"
         )
         embedding = tf.keras.layers.Embedding(outputs_size, embedding_size)(self._inputs)
         lstm = tf.keras.layers.LSTM(hidden_size, return_sequences=True)(embedding)
