@@ -11,10 +11,22 @@ import os
 import warnings
 import customtkinter as ctk
 
-# 配置外观模式为系统默认 (跟随系统亮暗色)
 ctk.set_appearance_mode("System")
-# 配置颜色主题，可选: "blue" (默认), "green", "dark-blue"
 ctk.set_default_color_theme("blue")
+
+COLORS = {
+    "bg": ("#F5F7FB", "#0B1220"),
+    "card": ("#FFFFFF", "#111827"),
+    "border": ("#E0E3EB", "#243244"),
+    "text": ("#202124", "#E5E7EB"),
+    "subtext": ("#5F6368", "#AAB4C2"),
+    "primary": ("#1A73E8", "#1A73E8"),
+    "primary_hover": ("#1669C1", "#1669C1"),
+    "input_bg": ("#F8FAFC", "#0F172A"),
+    "log_bg": ("#0F172A", "#0B1220"),
+    "log_fg": ("#E5E7EB", "#E5E7EB"),
+    "danger": ("#EF4444", "#F87171"),
+}
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
@@ -47,7 +59,7 @@ class TextRedirector(object):
 
     def write(self, string):
         self.text_widget.configure(state='normal')
-        self.text_widget.insert(tk.END, string)
+        self.text_widget.insert(tk.END, string, self.tag)
         self.text_widget.see(tk.END)
         self.text_widget.configure(state='disabled')
         self.text_widget.update_idletasks()
@@ -61,6 +73,8 @@ class LotteryPredictorApp(ctk.CTk):
         self.title("AI 彩票预测系统 v2.0 - Material Design")
         self.geometry("900x650")
         self.minsize(800, 600)
+
+        self.configure(fg_color=COLORS["bg"])
         
         # 配置网格自适应
         self.grid_columnconfigure(0, weight=1)
@@ -69,7 +83,13 @@ class LotteryPredictorApp(ctk.CTk):
         # ----------------------------------------
         # 顶部：控制卡片面板 (Google Material 风格)
         # ----------------------------------------
-        self.control_frame = ctk.CTkFrame(self, corner_radius=15)
+        self.control_frame = ctk.CTkFrame(
+            self,
+            corner_radius=15,
+            fg_color=COLORS["card"],
+            border_width=1,
+            border_color=COLORS["border"],
+        )
         self.control_frame.grid(row=0, column=0, padx=20, pady=(20, 10), sticky="ew")
         
         # 内部网格布局
@@ -78,13 +98,19 @@ class LotteryPredictorApp(ctk.CTk):
         # 标题
         self.lbl_title = ctk.CTkLabel(
             self.control_frame, 
-            text="🎯 AI 智能预测参数配置", 
-            font=ctk.CTkFont(size=20, weight="bold")
+            text="AI 智能预测参数配置",
+            font=ctk.CTkFont(size=20, weight="bold"),
+            text_color=COLORS["text"],
         )
         self.lbl_title.grid(row=0, column=0, columnspan=6, padx=20, pady=(20, 10), sticky="w")
         
         # 玩法选择
-        self.lbl_game = ctk.CTkLabel(self.control_frame, text="🎲 彩票玩法:", font=ctk.CTkFont(size=14))
+        self.lbl_game = ctk.CTkLabel(
+            self.control_frame,
+            text="彩票玩法:",
+            font=ctk.CTkFont(size=14),
+            text_color=COLORS["subtext"],
+        )
         self.lbl_game.grid(row=1, column=0, padx=(20, 5), pady=10, sticky="w")
         self.game_var = ctk.StringVar(value="ssq (双色球)")
         self.game_combo = ctk.CTkOptionMenu(
@@ -92,13 +118,24 @@ class LotteryPredictorApp(ctk.CTk):
             variable=self.game_var, 
             values=["ssq (双色球)", "dlt (大乐透)", "qlc (七乐彩)", "fc3d (福彩3D)"],
             font=ctk.CTkFont(size=13),
+            fg_color=COLORS["input_bg"],
+            text_color=COLORS["text"],
+            button_color=COLORS["primary"],
+            button_hover_color=COLORS["primary_hover"],
+            dropdown_fg_color=COLORS["card"],
+            dropdown_text_color=COLORS["text"],
             dynamic_resizing=False,
             width=140
         )
         self.game_combo.grid(row=1, column=1, padx=(0, 20), pady=10, sticky="w")
         
         # 策略选择
-        self.lbl_strategy = ctk.CTkLabel(self.control_frame, text="🧠 预测策略:", font=ctk.CTkFont(size=14))
+        self.lbl_strategy = ctk.CTkLabel(
+            self.control_frame,
+            text="预测策略:",
+            font=ctk.CTkFont(size=14),
+            text_color=COLORS["subtext"],
+        )
         self.lbl_strategy.grid(row=1, column=2, padx=(10, 5), pady=10, sticky="w")
         self.strategy_var = ctk.StringVar(value="hybrid (混合分析)")
         self.strategy_combo = ctk.CTkOptionMenu(
@@ -106,13 +143,24 @@ class LotteryPredictorApp(ctk.CTk):
             variable=self.strategy_var, 
             values=["hybrid (混合分析)", "model_only (仅AI模型)", "strategy_only (仅统计算法)"],
             font=ctk.CTkFont(size=13),
+            fg_color=COLORS["input_bg"],
+            text_color=COLORS["text"],
+            button_color=COLORS["primary"],
+            button_hover_color=COLORS["primary_hover"],
+            dropdown_fg_color=COLORS["card"],
+            dropdown_text_color=COLORS["text"],
             dynamic_resizing=False,
             width=180
         )
         self.strategy_combo.grid(row=1, column=3, padx=(0, 20), pady=10, sticky="w")
         
         # 生成组数
-        self.lbl_combo = ctk.CTkLabel(self.control_frame, text="🔢 生成组数:", font=ctk.CTkFont(size=14))
+        self.lbl_combo = ctk.CTkLabel(
+            self.control_frame,
+            text="生成组数:",
+            font=ctk.CTkFont(size=14),
+            text_color=COLORS["subtext"],
+        )
         self.lbl_combo.grid(row=1, column=4, padx=(10, 5), pady=10, sticky="w")
         self.combo_num_var = ctk.StringVar(value="5")
         self.combo_entry = ctk.CTkOptionMenu(
@@ -120,6 +168,12 @@ class LotteryPredictorApp(ctk.CTk):
             variable=self.combo_num_var, 
             values=[str(i) for i in range(1, 21)],
             font=ctk.CTkFont(size=13),
+            fg_color=COLORS["input_bg"],
+            text_color=COLORS["text"],
+            button_color=COLORS["primary"],
+            button_hover_color=COLORS["primary_hover"],
+            dropdown_fg_color=COLORS["card"],
+            dropdown_text_color=COLORS["text"],
             dynamic_resizing=False,
             width=80
         )
@@ -131,17 +185,25 @@ class LotteryPredictorApp(ctk.CTk):
             self.control_frame, 
             text="预测前重新训练模型 (耗时较长)", 
             variable=self.train_var,
-            font=ctk.CTkFont(size=14)
+            font=ctk.CTkFont(size=14),
+            text_color=COLORS["subtext"],
+            fg_color=COLORS["border"],
+            progress_color=COLORS["primary"],
+            button_color=COLORS["primary"],
+            button_hover_color=COLORS["primary_hover"],
         )
         self.sw_train.grid(row=2, column=0, columnspan=3, padx=20, pady=(15, 20), sticky="w")
         
         # 运行按钮 (突出显示的 Primary Button)
         self.run_btn = ctk.CTkButton(
             self.control_frame, 
-            text="▶ 一键开始执行", 
+            text="开始执行",
             font=ctk.CTkFont(size=15, weight="bold"),
             height=40,
             corner_radius=8,
+            fg_color=COLORS["primary"],
+            hover_color=COLORS["primary_hover"],
+            text_color="#FFFFFF",
             command=self.start_thread
         )
         self.run_btn.grid(row=2, column=4, columnspan=2, padx=20, pady=(15, 20), sticky="e")
@@ -149,15 +211,22 @@ class LotteryPredictorApp(ctk.CTk):
         # ----------------------------------------
         # 底部：日志面板 (Card Style)
         # ----------------------------------------
-        self.log_frame = ctk.CTkFrame(self, corner_radius=15)
+        self.log_frame = ctk.CTkFrame(
+            self,
+            corner_radius=15,
+            fg_color=COLORS["card"],
+            border_width=1,
+            border_color=COLORS["border"],
+        )
         self.log_frame.grid(row=1, column=0, padx=20, pady=(10, 20), sticky="nsew")
         self.log_frame.grid_columnconfigure(0, weight=1)
         self.log_frame.grid_rowconfigure(1, weight=1)
         
         self.lbl_log_title = ctk.CTkLabel(
             self.log_frame, 
-            text="📝 执行日志", 
-            font=ctk.CTkFont(size=16, weight="bold")
+            text="执行日志",
+            font=ctk.CTkFont(size=16, weight="bold"),
+            text_color=COLORS["text"],
         )
         self.lbl_log_title.grid(row=0, column=0, padx=20, pady=(15, 5), sticky="w")
         
@@ -167,9 +236,21 @@ class LotteryPredictorApp(ctk.CTk):
             font=ctk.CTkFont(family="Consolas", size=13),
             state='disabled', 
             wrap="word",
-            corner_radius=8
+            corner_radius=8,
+            fg_color=COLORS["log_bg"],
+            text_color=COLORS["log_fg"],
+            border_width=1,
+            border_color=COLORS["border"],
+            scrollbar_button_color=COLORS["primary"],
+            scrollbar_button_hover_color=COLORS["primary_hover"],
         )
         self.log_text.grid(row=1, column=0, padx=20, pady=(5, 20), sticky="nsew")
+
+        try:
+            self.log_text._textbox.tag_configure("stdout", foreground=COLORS["log_fg"][0])
+            self.log_text._textbox.tag_configure("stderr", foreground=COLORS["danger"][0])
+        except Exception:
+            pass
         
         # ----------------------------------------
         # 日志重定向
