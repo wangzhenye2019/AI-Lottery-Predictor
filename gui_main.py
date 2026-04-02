@@ -1578,8 +1578,10 @@ class PickerPanel(ctk.CTkFrame):
 
         red_n = tuple(sorted([int(x) for x in red]))
         blue_n = tuple(sorted([int(x) for x in blue]))
-        for t in self.my_tickets:
+        for idx, t in enumerate(self.my_tickets):
             if t.get("game_key") == game_key and tuple(t.get("red", [])) == red_n and tuple(t.get("blue", [])) == blue_n:
+                self._sim_selected_ticket_idx = idx
+                self._render_my_ticket_list()
                 return
         ticket = {
             "game_key": game_key,
@@ -1832,22 +1834,19 @@ class PickerPanel(ctk.CTkFrame):
             return
         combo = self._lucky_last[0]
 
-        self.red_selected = sorted([int(x) for x in combo.get('red', [])])
+        red = sorted([int(x) for x in combo.get('red', [])])
         b = combo.get('blue')
         if isinstance(b, list):
-            self.blue_selected = sorted([int(x) for x in b])
+            blue = sorted([int(x) for x in b])
         elif b is None:
-            self.blue_selected = []
+            blue = []
         else:
-            self.blue_selected = [int(b)]
-
-        self._bet_mode.set("普通投注")
-        self._switch_mode()
-        self._red_grid.refresh()
-        self._blue_grid.refresh()
-        self._update_summary()
+            blue = [int(b)]
         game_key = self.get_game_key()
-        self._add_my_ticket(game_key=game_key, mode="AI选号(填充)", red=self.red_selected, blue=self.blue_selected)
+
+        self._add_my_ticket(game_key=game_key, mode="AI选号(填充)", red=red, blue=blue)
+        self._bet_mode.set("模拟摇奖")
+        self._switch_mode()
 
     def _simulate_draw(self) -> None:
         ticket = self._get_ticket_for_sim()
