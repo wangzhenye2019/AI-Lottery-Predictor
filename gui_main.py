@@ -149,15 +149,80 @@ class GameRule:
     red_pick: int
     blue_max: int
     blue_pick: int
+    draw_weekdays: Tuple[int, ...] = (1, 3, 6)
     close_time: str = "20:00:00"
     cost_per_bet: int = 2
 
 
 GAME_RULES: Dict[str, GameRule] = {
-    "ssq": GameRule(key="ssq", name="双色球", red_max=33, red_pick=6, blue_max=16, blue_pick=1, close_time="20:00:00"),
-    "dlt": GameRule(key="dlt", name="大乐透", red_max=35, red_pick=5, blue_max=12, blue_pick=2, close_time="20:00:00"),
-    "qlc": GameRule(key="qlc", name="七乐彩", red_max=30, red_pick=7, blue_max=30, blue_pick=1, close_time="20:00:00"),
+    "ssq": GameRule(key="ssq", name="双色球", red_max=33, red_pick=6, blue_max=16, blue_pick=1, draw_weekdays=(1, 3, 6), close_time="20:00:00"),
+    "dlt": GameRule(key="dlt", name="大乐透", red_max=35, red_pick=5, blue_max=12, blue_pick=2, draw_weekdays=(0, 2, 5), close_time="20:00:00"),
+    "qlc": GameRule(key="qlc", name="七乐彩", red_max=30, red_pick=7, blue_max=30, blue_pick=1, draw_weekdays=(0, 2, 4), close_time="20:00:00"),
 }
+
+
+WEEKDAY_CN = {
+    0: "一",
+    1: "二",
+    2: "三",
+    3: "四",
+    4: "五",
+    5: "六",
+    6: "日",
+}
+
+
+def _normalize_issue(issue: str) -> str:
+    s = str(issue).strip()
+    if s.isdigit() and len(s) == 5:
+        return "20" + s
+    return s
+
+
+def _parse_draw_date(date_str: str) -> Optional[datetime]:
+    s = (date_str or "").strip()
+    if len(s) >= 10:
+        try:
+            return datetime.strptime(s[:10], "%Y-%m-%d")
+        except Exception:
+            return None
+    return None
+
+
+def _format_date_cn(dt: datetime) -> str:
+    return f"{dt.strftime('%Y-%m-%d')}({WEEKDAY_CN.get(dt.weekday(), '')})"
+
+
+def _next_draw_date(last_draw: datetime, rule: GameRule) -> datetime:
+    d = last_draw
+    for _ in range(10):
+        d = d.replace(hour=0, minute=0, second=0, microsecond=0) + pd.Timedelta(days=1)
+        if d.weekday() in rule.draw_weekdays:
+            return datetime(d.year, d.month, d.day)
+    return datetime(d.year, d.month, d.day)
+
+
+def _calc_current_sale_issue(last_draw_issue: str, last_draw_date: str, rule: GameRule, now: Optional[datetime] = None) -> Tuple[str, str]:
+    now = now or datetime.now()
+    draw_dt = _parse_draw_date(last_draw_date)
+    base_issue = _normalize_issue(last_draw_issue)
+
+    if draw_dt is None or not base_issue.isdigit() or len(base_issue) < 7:
+        return base_issue, (last_draw_date or "")
+
+    next_dt = _next_draw_date(draw_dt, rule)
+    next_date_str = _format_date_cn(next_dt)
+
+    try:
+        last_issue_int = int(base_issue)
+        if next_dt.year != draw_dt.year:
+            next_issue = f"{next_dt.year}001"
+        else:
+            next_issue = str(last_issue_int + 1)
+    except Exception:
+        next_issue = base_issue
+
+    return next_issue, next_date_str
 
 
 def comb(n: int, k: int) -> int:
@@ -268,7 +333,7 @@ class DataCache:
             df = pd.read_csv(data_path)
             self._df = df
             if len(df):
-                self._latest_issue = str(df.iloc[0].get("期数", "未知"))
+                self._latest_issue = _normalize_issue(str(df.iloc[0].get("期数", "未知")))
                 self._latest_date = str(df.iloc[0].get("日期", ""))
             self._analyzer = StrategyAnalyzer(df)
             self._omission_red = self._fast_omission(df, "red")
@@ -281,6 +346,7 @@ class DataCache:
                     from get_data import spider_cwl
                     api_df = spider_cwl(game_key, 1)
                     if api_df is not None and len(api_df):
+                        self._latest_issue = _normalize_issue(str(api_df.iloc[0].get("期数", self._latest_issue)))
                         self._latest_date = str(api_df.iloc[0].get("日期", self._latest_date))
                 except Exception:
                     pass
@@ -1404,11 +1470,12 @@ class PickerPanel(ctk.CTkFrame):
         game_key = self.get_game_key()
         self._cache.load(game_key)
         rule = GAME_RULES[game_key]
-        date_str = (self._cache.latest_date or "").strip()
+        sale_issue, sale_date = _calc_current_sale_issue(self._cache.latest_issue, self._cache.latest_date, rule)
+        date_str = (sale_date or "").strip()
         if date_str:
-            self._issue.configure(text=f"第{self._cache.latest_issue}期  {date_str}  {rule.close_time}截止")
+            self._issue.configure(text=f"第{sale_issue}期  {date_str}  {rule.close_time}截止")
         else:
-            self._issue.configure(text=f"第{self._cache.latest_issue}期  {rule.close_time}截止")
+            self._issue.configure(text=f"第{sale_issue}期  {rule.close_time}截止")
 
         self.red_selected = []
         self.blue_selected = []
