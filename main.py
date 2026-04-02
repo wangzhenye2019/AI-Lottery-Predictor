@@ -3,6 +3,15 @@
 Author: BigCat
 Description: 一键运行主程序入口，支持进度条展示
 """
+import os
+import warnings
+
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
+from utils.runtime_config import apply_runtime_env
+
+apply_runtime_env()
+
 import argparse
 import time
 import sys
@@ -18,15 +27,9 @@ from run_predict_enhanced import run as run_predict_enhanced
 logger.remove()
 logger.add(sys.stdout, format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{message}</level>", level="INFO")
 
-import warnings
-import os
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # 屏蔽TF C++层面的INFO和WARNING
-os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0' # 屏蔽 oneDNN 提示
 warnings.filterwarnings('ignore', category=UserWarning, module='tensorflow')
 warnings.filterwarnings('ignore', category=FutureWarning, module='tensorflow')
 warnings.filterwarnings('ignore', module='keras')
-import tensorflow as tf
-tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 
 parser = argparse.ArgumentParser(description="双色球/大乐透 AI 预测系统 - 一键执行")
 parser.add_argument('--name', default="ssq", type=str, choices=['ssq', 'dlt', 'qlc', 'fc3d'], help="选择玩法：ssq(双色球)/dlt(大乐透)/qlc(七乐彩)/fc3d(福彩3D)")

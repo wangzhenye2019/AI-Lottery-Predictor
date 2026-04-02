@@ -5,6 +5,10 @@ Author: BigCat
 import warnings
 import os
 
+from utils.runtime_config import apply_runtime_env
+
+apply_runtime_env()
+
 # 抑制 TensorFlow 和 TFA 的警告信息（不影响功能）
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # 只显示 ERROR 级别日志
 warnings.filterwarnings('ignore', category=UserWarning, module='tensorflow_addons')
@@ -20,7 +24,7 @@ from tensorflow_addons.text.crf import crf_decode, crf_log_likelihood
 
 # 关闭 eager 模式
 tf.compat.v1.disable_eager_execution()
-tf.compat.v1.experimental.output_all_intermediates(True)
+tf.compat.v1.experimental.output_all_intermediates(False)
 
 
 class LstmWithCRFModel(object):

@@ -6,11 +6,15 @@
 import json
 import os
 import numpy as np
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Tuple, Optional, Union
 from config import model_args, pred_key_name, model_path, ball_name, name_path
 from modeling import LstmWithCRFModel, SignalLstmModel, tf
 from utils.exceptions import ModelLoadError, PredictionError
 from utils.logger import log
+from utils.runtime_config import get_runtime_tuning
+
+_RUNTIME_LOGGED = False
 
 
 class PredictService:
@@ -34,6 +38,20 @@ class PredictService:
         """加载红球和蓝球模型"""
         try:
             m_args = model_args[self.name]
+            global _RUNTIME_LOGGED
+            tuning = get_runtime_tuning()
+            if not _RUNTIME_LOGGED:
+                mem_str = f"{tuning.mem_available_gb:.1f}GB" if tuning.mem_available_gb is not None else "未知"
+                log.info(
+                    f"系统资源: CPU={tuning.cpu_logical}, 可用内存={mem_str}, "
+                    f"推理并行={tuning.parallel_predict}, TF线程={tuning.tf_intra_threads}/{tuning.tf_inter_threads}"
+                )
+                _RUNTIME_LOGGED = True
+            sess_config = tf.compat.v1.ConfigProto(
+                intra_op_parallelism_threads=tuning.tf_intra_threads,
+                inter_op_parallelism_threads=tuning.tf_inter_threads,
+                allow_soft_placement=True,
+            )
             # 加载红球模型
             self.red_graph = tf.compat.v1.Graph()
             with self.red_graph.as_default():
@@ -60,7 +78,7 @@ class PredictService:
                         layer_size=m_args["model_args"]["red_layer_size"]
                     )
                 red_saver = tf.compat.v1.train.Saver()
-            self.red_sess = tf.compat.v1.Session(graph=self.red_graph)
+            self.red_sess = tf.compat.v1.Session(graph=self.red_graph, config=sess_config)
             red_saver.restore(
                 self.red_sess, 
                 os.path.join(m_args["path"]["red"], "red_ball_model.ckpt")
@@ -92,7 +110,7 @@ class PredictService:
                         layer_size=m_args["model_args"]["blue_layer_size"]
                     )
                 blue_saver = tf.compat.v1.train.Saver()
-            self.blue_sess = tf.compat.v1.Session(graph=self.blue_graph)
+            self.blue_sess = tf.compat.v1.Session(graph=self.blue_graph, config=sess_config)
             blue_saver.restore(
                 self.blue_sess, 
                 os.path.join(m_args["path"]["blue"], "blue_ball_model.ckpt")
@@ -236,41 +254,51 @@ class PredictService:
             预测结果字典 {'red': [...], 'blue': ...}
         """
         m_args = model_args[self.name]["model_args"]
+        tuning = get_runtime_tuning()
         
         if self.name in ["ssq", "qlc"]:
-            # 红球预测
-            red_pred, red_name_list = self.predict_red_balls(
-                predict_features,
-                m_args["sequence_len"],
-                m_args["windows_size"]
-            )
-            
-            # 蓝球预测
-            blue_pred = self.predict_blue_balls(
-                predict_features,
-                0,
-                m_args["windows_size"],
-                ball_count=1
-            )
+            if tuning.parallel_predict:
+                with ThreadPoolExecutor(max_workers=2) as ex:
+                    f_red = ex.submit(self.predict_red_balls, predict_features, m_args["sequence_len"], m_args["windows_size"])
+                    f_blue = ex.submit(self.predict_blue_balls, predict_features, 0, m_args["windows_size"], 1)
+                    red_pred, red_name_list = f_red.result()
+                    blue_pred = f_blue.result()
+            else:
+                red_pred, red_name_list = self.predict_red_balls(
+                    predict_features,
+                    m_args["sequence_len"],
+                    m_args["windows_size"]
+                )
+                blue_pred = self.predict_blue_balls(
+                    predict_features,
+                    0,
+                    m_args["windows_size"],
+                    ball_count=1
+                )
             
             return {
                 'red': sorted([int(res) + 1 for res in red_pred]),
                 'blue': int(blue_pred[0]) + 1
             }
         else:
-            # 大乐透
-            red_pred, red_name_list = self.predict_red_balls(
-                predict_features,
-                m_args["red_sequence_len"],
-                m_args["windows_size"]
-            )
-            
-            blue_pred, blue_name_list = self.predict_blue_balls(
-                predict_features,
-                m_args["blue_sequence_len"],
-                m_args["windows_size"],
-                ball_count=2
-            )
+            if tuning.parallel_predict:
+                with ThreadPoolExecutor(max_workers=2) as ex:
+                    f_red = ex.submit(self.predict_red_balls, predict_features, m_args["red_sequence_len"], m_args["windows_size"])
+                    f_blue = ex.submit(self.predict_blue_balls, predict_features, m_args["blue_sequence_len"], m_args["windows_size"], 2)
+                    red_pred, red_name_list = f_red.result()
+                    blue_pred, blue_name_list = f_blue.result()
+            else:
+                red_pred, red_name_list = self.predict_red_balls(
+                    predict_features,
+                    m_args["red_sequence_len"],
+                    m_args["windows_size"]
+                )
+                blue_pred, blue_name_list = self.predict_blue_balls(
+                    predict_features,
+                    m_args["blue_sequence_len"],
+                    m_args["windows_size"],
+                    ball_count=2
+                )
             
             return {
                 'red': sorted([int(res) + 1 for res in red_pred]),
