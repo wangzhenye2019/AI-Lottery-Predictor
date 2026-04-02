@@ -531,16 +531,27 @@ class LotteryStrategy:
                 p=red_probs
             ).tolist())
             
-            # 蓝球同样加权
+            blue_count = len(self.strategy.blue_balls) if len(getattr(self.strategy, 'blue_balls', [])) else 1
+            blue_count = max(1, int(blue_count))
+
             blue_weights = []
             for b in blue_candidates:
                 weight = 1.0 + (blue_freq.get(b, 0) / max(1, sum(blue_freq.values()))) * 10
                 blue_weights.append(weight)
-            blue_probs = np.array(blue_weights) / sum(blue_weights)
-            
-            blue_ball = np.random.choice(blue_candidates, p=blue_probs)
-            
-            combinations.append({'red': red_balls, 'blue': int(blue_ball)})
+            blue_probs = np.array(blue_weights) / max(1e-9, sum(blue_weights))
+
+            pick_n = min(blue_count, len(blue_candidates))
+            if pick_n == 1:
+                blue_ball = int(np.random.choice(blue_candidates, p=blue_probs))
+                combinations.append({'red': red_balls, 'blue': blue_ball})
+            else:
+                blue_balls = sorted(np.random.choice(
+                    blue_candidates,
+                    size=pick_n,
+                    replace=False,
+                    p=blue_probs,
+                ).astype(int).tolist())
+                combinations.append({'red': red_balls, 'blue': blue_balls})
             
         return combinations
     
