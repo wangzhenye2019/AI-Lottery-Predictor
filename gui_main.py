@@ -783,7 +783,7 @@ class PickerPanel(ctk.CTkFrame):
         self._bet_mode = ctk.StringVar(value="普通投注")
         self._modes = ctk.CTkSegmentedButton(
             self._top,
-            values=["普通投注", "胆拖投注", "幸运选号", "模拟摇奖", "奖金计算"],
+            values=["普通投注", "胆拖投注", "AI选号", "模拟摇奖", "奖金计算"],
             variable=self._bet_mode,
             selected_color=COLORS["danger"],
             selected_hover_color=COLORS["danger"],
@@ -829,14 +829,14 @@ class PickerPanel(ctk.CTkFrame):
             w.destroy()
         self._mode_frames.clear()
 
-        for mode in ["普通投注", "胆拖投注", "幸运选号", "模拟摇奖", "奖金计算"]:
+        for mode in ["普通投注", "胆拖投注", "AI选号", "模拟摇奖", "奖金计算"]:
             f = ctk.CTkFrame(self._body, fg_color="transparent")
             f.grid(row=0, column=0, sticky="nsew")
             self._mode_frames[mode] = f
 
         self._build_normal(self._mode_frames["普通投注"])
         self._build_placeholder(self._mode_frames["胆拖投注"], "胆拖投注：下一步支持红球胆码/拖码与注数计算")
-        self._build_lucky(self._mode_frames["幸运选号"])
+        self._build_lucky(self._mode_frames["AI选号"])
         self._build_sim(self._mode_frames["模拟摇奖"])
         self._build_placeholder(self._mode_frames["奖金计算"], "奖金计算：下一步支持按命中情况计算奖级")
 
@@ -904,7 +904,7 @@ class PickerPanel(ctk.CTkFrame):
         top = ctk.CTkFrame(card, fg_color="transparent")
         top.grid(row=0, column=0, padx=14, pady=14, sticky="ew")
         top.grid_columnconfigure(2, weight=1)
-        ctk.CTkLabel(top, text="幸运选号", font=ctk.CTkFont(size=16, weight="bold"), text_color=COLORS["text"]).grid(
+        ctk.CTkLabel(top, text="AI选号", font=ctk.CTkFont(size=16, weight="bold"), text_color=COLORS["text"]).grid(
             row=0, column=0, sticky="w"
         )
 
@@ -1027,7 +1027,7 @@ class PickerPanel(ctk.CTkFrame):
 
         game = self.get_game_key()
         if game == "fc3d":
-            self._write_box(self._lucky_log, "福彩3D暂不支持幸运选号面板\n")
+            self._write_box(self._lucky_log, "福彩3D暂不支持AI选号面板\n")
             self._lucky_running = False
             self._lucky_btn.configure(state="normal", text="生成推荐")
             return
