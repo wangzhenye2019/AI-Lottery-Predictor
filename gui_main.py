@@ -659,6 +659,7 @@ class DantuoPanel(ctk.CTkFrame):
         self._set_blue = set_blue
         self._on_change = on_change
         self._mode = ctk.StringVar(value="遗漏")
+        self._pick_mode = ctk.StringVar(value="胆码")
 
         self.grid_columnconfigure(0, weight=1)
 
@@ -718,6 +719,19 @@ class DantuoPanel(ctk.CTkFrame):
             command=lambda _: self.refresh(),
         )
         self._toggle.grid(row=1, column=0, padx=16, pady=(0, 10), sticky="w")
+
+        self._pick_toggle = ctk.CTkSegmentedButton(
+            self._red_card,
+            values=["胆码", "拖码"],
+            variable=self._pick_mode,
+            selected_color=COLORS["primary"],
+            selected_hover_color=COLORS["primary_hover"],
+            fg_color=COLORS["chip"],
+            unselected_color=COLORS["chip"],
+            unselected_hover_color=COLORS["border"],
+            text_color=COLORS["text"],
+        )
+        self._pick_toggle.grid(row=1, column=0, padx=16, pady=(0, 10), sticky="e")
 
         self._red_grid = ctk.CTkFrame(self._red_card, fg_color="transparent")
         self._red_grid.grid(row=2, column=0, padx=16, pady=(0, 16), sticky="ew")
@@ -790,16 +804,27 @@ class DantuoPanel(ctk.CTkFrame):
     def _toggle_red(self, n: int) -> None:
         dan = set(self._get_red_dan())
         tuo = set(self._get_red_tuo())
-        if n in dan:
-            dan.remove(n)
-        elif n in tuo:
-            tuo.remove(n)
-        else:
-            rule = self._get_rule()
-            if len(dan) < rule.red_pick - 1:
-                dan.add(n)
+        rule = self._get_rule()
+
+        if self._pick_mode.get() == "胆码":
+            if n in dan:
+                dan.remove(n)
             else:
+                if n in tuo:
+                    tuo.remove(n)
+                if len(dan) >= rule.red_pick - 1:
+                    messagebox.showwarning("提示", f"胆码最多 {rule.red_pick - 1} 个")
+                    self.refresh()
+                    return
+                dan.add(n)
+        else:
+            if n in tuo:
+                tuo.remove(n)
+            else:
+                if n in dan:
+                    dan.remove(n)
                 tuo.add(n)
+
         dan = dan - tuo
         tuo = tuo - dan
         self._set_red_dan(sorted(dan))
@@ -1098,8 +1123,9 @@ class PickerPanel(ctk.CTkFrame):
         self._body.grid_columnconfigure(0, weight=1)
 
         self._footer = ctk.CTkFrame(self, fg_color=COLORS["card"], corner_radius=12, border_width=1, border_color=COLORS["border"])
-        self._footer.grid(row=2, column=0, pady=(12, 0), sticky="ew")
+        self._footer.grid(row=2, column=0, pady=(12, 12), sticky="ew")
         self._footer.grid_columnconfigure(0, weight=1)
+        self._footer.grid_columnconfigure(1, weight=0)
         self._summary = ctk.CTkLabel(self._footer, text="", font=ctk.CTkFont(size=13), text_color=COLORS["text"])
         self._summary.grid(row=0, column=0, padx=14, pady=14, sticky="w")
         self._btn_done = ctk.CTkButton(
@@ -1295,6 +1321,7 @@ class PickerPanel(ctk.CTkFrame):
             border_color=COLORS["border"],
             corner_radius=8,
             font=ctk.CTkFont(family="Consolas", size=12),
+            wrap="word",
         )
         self._lucky_log.grid(row=1, column=0, padx=14, pady=(0, 14), sticky="nsew")
 
@@ -1336,6 +1363,7 @@ class PickerPanel(ctk.CTkFrame):
             border_color=COLORS["border"],
             corner_radius=8,
             font=ctk.CTkFont(family="Consolas", size=12),
+            wrap="word",
         )
         self._sim_log.grid(row=3, column=0, padx=14, pady=(0, 14), sticky="nsew")
 
