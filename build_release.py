@@ -65,6 +65,7 @@ def build_executable():
             "--hidden-import", "numpy",
             "--hidden-import", "requests",
             "--hidden-import", "bs4",
+            "--collect-all", "customtkinter",
             "gui_main.py"
         ]
         print(f"[*] 执行命令 (GUI): {' '.join(cmd_gui)}")
