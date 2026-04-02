@@ -1441,6 +1441,12 @@ class PickerPanel(ctk.CTkFrame):
         ).grid(row=0, column=2, padx=(10, 0), sticky="e")
 
         self._lucky_fill_index = ctk.StringVar(value="1")
+        ctk.CTkLabel(
+            top,
+            text="填充第",
+            font=ctk.CTkFont(size=13),
+            text_color=COLORS["subtext"],
+        ).grid(row=0, column=3, padx=(10, 0))
         self._lucky_fill_menu = ctk.CTkOptionMenu(
             top,
             variable=self._lucky_fill_index,
@@ -1453,7 +1459,13 @@ class PickerPanel(ctk.CTkFrame):
             dropdown_text_color=COLORS["text"],
             width=90,
         )
-        self._lucky_fill_menu.grid(row=0, column=3, padx=(10, 0))
+        self._lucky_fill_menu.grid(row=0, column=4, padx=(6, 0))
+        ctk.CTkLabel(
+            top,
+            text="组",
+            font=ctk.CTkFont(size=13),
+            text_color=COLORS["subtext"],
+        ).grid(row=0, column=5, padx=(6, 0))
 
         self._lucky_btn = ctk.CTkButton(
             top,
@@ -1463,7 +1475,7 @@ class PickerPanel(ctk.CTkFrame):
             text_color="#FFFFFF",
             command=self._run_lucky,
         )
-        self._lucky_btn.grid(row=0, column=4, padx=(10, 0))
+        self._lucky_btn.grid(row=0, column=6, padx=(10, 0))
 
         self._lucky_fill_btn = ctk.CTkButton(
             top,
@@ -1473,7 +1485,7 @@ class PickerPanel(ctk.CTkFrame):
             text_color=COLORS["text"],
             command=self._fill_selected_lucky,
         )
-        self._lucky_fill_btn.grid(row=0, column=5, padx=(10, 0))
+        self._lucky_fill_btn.grid(row=0, column=7, padx=(10, 0))
 
         self._lucky_log = ctk.CTkTextbox(
             card,
@@ -1710,6 +1722,38 @@ class PickerPanel(ctk.CTkFrame):
                         combos = strategy_engine.generate_combinations(red_pool, blue_pool, n_combinations=count)
                         combos = strategy_engine.smart_filter(combos)
 
+                def _combo_key(c: Dict) -> tuple:
+                    r = tuple(sorted([int(x) for x in (c.get('red') or [])]))
+                    b = c.get('blue')
+                    if isinstance(b, list):
+                        bb = tuple(sorted([int(x) for x in b]))
+                    elif b is None:
+                        bb = tuple()
+                    else:
+                        bb = (int(b),)
+                    return (r, bb)
+
+                if len(combos) < count:
+                    ui(f"组合不足({len(combos)}/{count})，补足生成...\n")
+                    seen = {_combo_key(c) for c in combos}
+                    fallback_rounds = 0
+                    while len(combos) < count and fallback_rounds < 20:
+                        need = count - len(combos)
+                        extra = strategy_engine.generate_combinations(
+                            recommendation['red_candidates'],
+                            recommendation['blue_candidates'],
+                            n_combinations=max(need, 10),
+                        )
+                        for c in extra:
+                            k = _combo_key(c)
+                            if k in seen:
+                                continue
+                            seen.add(k)
+                            combos.append(c)
+                            if len(combos) >= count:
+                                break
+                        fallback_rounds += 1
+
                 if not combos:
                     ui("过滤条件过严，回退到未过滤组合...\n")
                     combos = strategy_engine.generate_combinations(
@@ -1720,7 +1764,7 @@ class PickerPanel(ctk.CTkFrame):
 
                 self._lucky_last = combos
                 try:
-                    max_idx = min(100, len(combos))
+                    max_idx = min(100, max(1, min(count, len(combos))))
                     values = [str(i) for i in range(1, max_idx + 1)]
                     self.after(0, lambda v=values: self._lucky_fill_menu.configure(values=v))
                     self.after(0, lambda: self._lucky_fill_index.set("1"))
