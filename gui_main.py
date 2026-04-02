@@ -1476,6 +1476,34 @@ class PickerPanel(ctk.CTkFrame):
         )
         self._lucky_fill_btn.grid(row=0, column=4, padx=(10, 0))
 
+        self._lucky_cancel_btn = ctk.CTkButton(
+            top,
+            text="终止生成",
+            fg_color=COLORS["chip"],
+            hover_color=COLORS["border"],
+            text_color=COLORS["danger"],
+            command=self._cancel_lucky,
+            state="disabled",
+            width=90,
+        )
+        self._lucky_cancel_btn.grid(row=0, column=5, padx=(10, 0))
+
+        self._ai_step_var = ctk.StringVar(value="就绪")
+        self._ai_eta_var = ctk.StringVar(value="")
+        status = ctk.CTkFrame(card, fg_color="transparent")
+        status.grid(row=1, column=0, padx=14, pady=(0, 10), sticky="ew")
+        status.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(status, textvariable=self._ai_step_var, font=ctk.CTkFont(size=13), text_color=COLORS["text"]).grid(
+            row=0, column=0, sticky="w"
+        )
+        ctk.CTkLabel(status, textvariable=self._ai_eta_var, font=ctk.CTkFont(size=12), text_color=COLORS["subtext"]).grid(
+            row=0, column=1, sticky="e"
+        )
+
+        self._ai_progress = ctk.CTkProgressBar(card, height=10)
+        self._ai_progress.grid(row=2, column=0, padx=14, pady=(0, 12), sticky="ew")
+        self._ai_progress.set(0)
+
         self._lucky_log = ctk.CTkTextbox(
             card,
             state="disabled",
@@ -1488,9 +1516,17 @@ class PickerPanel(ctk.CTkFrame):
             font=ctk.CTkFont(family="Consolas", size=12),
             wrap="word",
         )
-        self._lucky_log.grid(row=1, column=0, padx=14, pady=(0, 14), sticky="nsew")
+        self._lucky_log.grid(row=3, column=0, padx=14, pady=(0, 14), sticky="nsew")
 
         self._lucky_last: List[Dict] = []
+        self._ai_cancel_event = threading.Event()
+        self._ai_last_elapsed_s: Optional[float] = None
+
+    def _cancel_lucky(self) -> None:
+        try:
+            self._ai_cancel_event.set()
+        except Exception:
+            pass
 
     def _build_sim(self, frame: ctk.CTkFrame) -> None:
         frame.grid_columnconfigure(1, weight=1)
@@ -1705,6 +1741,11 @@ class PickerPanel(ctk.CTkFrame):
             return
         self._lucky_running = True
         self._lucky_btn.configure(state="disabled", text="生成中...")
+        self._lucky_cancel_btn.configure(state="normal")
+        self._ai_cancel_event.clear()
+        self._ai_progress.set(0)
+        self._ai_step_var.set("准备中...")
+        self._ai_eta_var.set("")
         self._write_box(self._lucky_log, "", clear=True)
         self._write_box(self._lucky_log, "开始生成AI选号...\n")
 
@@ -1720,11 +1761,35 @@ class PickerPanel(ctk.CTkFrame):
                 def ui(msg: str) -> None:
                     self.after(0, lambda m=msg: self._write_box(self._lucky_log, m))
 
+                started = time.time()
+                steps_total = 10
+
+                def cancelled() -> bool:
+                    return bool(self._ai_cancel_event.is_set())
+
+                def set_step(i: int, text: str) -> None:
+                    if cancelled():
+                        raise RuntimeError("cancelled")
+                    frac = max(0.0, min(1.0, i / steps_total))
+
+                    def _upd():
+                        self._ai_step_var.set(f"步骤{i}/{steps_total}：{text}")
+                        self._ai_progress.set(frac)
+                        elapsed = time.time() - started
+                        if frac > 0.05:
+                            remain = elapsed * (1 - frac) / frac
+                            self._ai_eta_var.set(f"预计剩余 {remain:.0f}s（已用 {elapsed:.0f}s）")
+                        else:
+                            self._ai_eta_var.set(f"已用 {elapsed:.0f}s")
+
+                    self.after(0, _upd)
+                    ui(f"[步骤{i}/{steps_total}] {text}\n")
+
                 strategy = self._lucky_strategy.get().strip()
                 count = min(100, max(1, int(self._lucky_count.get())))
 
-                ui(f"策略: {strategy}，目标组数: {count}\n")
-                ui("加载历史数据...\n")
+                set_step(1, f"读取参数（策略={strategy}，组数={count}）")
+                set_step(2, "加载历史数据")
 
                 self._cache.load(game)
                 df = self._cache.df
@@ -1734,25 +1799,30 @@ class PickerPanel(ctk.CTkFrame):
                 from core.strategies import LotteryStrategy
                 from services.predict_service import PredictService
 
+                if cancelled():
+                    raise RuntimeError("cancelled")
+
                 ui(f"历史数据: {len(df)} 期，最新期号: {self._cache.latest_issue}\n")
 
                 strategy_engine = LotteryStrategy(df)
-                ui("计算号码推荐池...\n")
+                set_step(3, "初始化策略引擎")
+                set_step(4, "计算推荐候选池")
                 recommendation = strategy_engine.recommend_balls(strategy='hybrid')
                 combos: List[Dict] = []
 
                 ui(f"候选池: 红球{len(recommendation.get('red_candidates', []))}个，蓝球{len(recommendation.get('blue_candidates', []))}个\n")
 
                 if strategy == 'strategy_only':
-                    ui("使用统计算法生成组合...\n")
+                    set_step(5, "使用统计算法生成组合")
                     combos = strategy_engine.generate_combinations(
                         recommendation['red_candidates'],
                         recommendation['blue_candidates'],
                         n_combinations=count,
                     )
+                    set_step(6, "过滤组合")
                     combos = strategy_engine.smart_filter(combos)
                 else:
-                    ui("加载模型并预测...（首次可能较慢）\n")
+                    set_step(5, "加载模型并预测（首次可能较慢）")
                     windows_size = model_args[game]["model_args"]["windows_size"]
                     features = df.iloc[:windows_size]
                     with PredictService(game) as service:
@@ -1765,7 +1835,7 @@ class PickerPanel(ctk.CTkFrame):
                             blue = [int(model_pred['blue'])]
                         combos = [{"red": sorted(model_pred['red']), "blue": blue[0] if len(blue) == 1 else blue}]
                     else:
-                        ui("混合策略：融合模型预测与统计候选池...\n")
+                        set_step(6, "混合策略：融合模型预测与统计候选池")
                         red_pool = list(set(model_pred['red'] + recommendation['red_candidates'][:12]))
                         blue_candidates = recommendation['blue_candidates']
                         if isinstance(model_pred.get('blue'), int):
@@ -1773,7 +1843,11 @@ class PickerPanel(ctk.CTkFrame):
                         else:
                             blue_pool = list(set(model_pred.get('blue', []) + blue_candidates[:max(3, model_args[game]["model_args"].get('blue_sequence_len', 1))]))
                         ui(f"融合后候选池: 红球{len(red_pool)}个，蓝球{len(blue_pool)}个\n")
+                        if cancelled():
+                            raise RuntimeError("cancelled")
+                        set_step(7, "生成组合")
                         combos = strategy_engine.generate_combinations(red_pool, blue_pool, n_combinations=count)
+                        set_step(8, "过滤组合")
                         combos = strategy_engine.smart_filter(combos)
 
                 def _combo_key(c: Dict) -> tuple:
@@ -1788,10 +1862,12 @@ class PickerPanel(ctk.CTkFrame):
                     return (r, bb)
 
                 if len(combos) < count:
-                    ui(f"组合不足({len(combos)}/{count})，补足生成...\n")
+                    set_step(9, f"组合不足({len(combos)}/{count})，补足生成")
                     seen = {_combo_key(c) for c in combos}
                     fallback_rounds = 0
                     while len(combos) < count and fallback_rounds < 20:
+                        if cancelled():
+                            raise RuntimeError("cancelled")
                         need = count - len(combos)
                         extra = strategy_engine.generate_combinations(
                             recommendation['red_candidates'],
@@ -1818,6 +1894,7 @@ class PickerPanel(ctk.CTkFrame):
 
                 self._lucky_last = combos
                 use_n = max(1, min(count, len(combos)))
+                set_step(10, "写入我的选号并输出推荐")
                 for i in range(use_n, 0, -1):
                     c = combos[i - 1]
                     r = [int(x) for x in (c.get('red') or [])]
@@ -1835,12 +1912,23 @@ class PickerPanel(ctk.CTkFrame):
                     lines.append(f"组合{i}: 红球 {c.get('red')} + 蓝球 {c.get('blue')}")
                 ui("\n".join(lines) + "\n")
                 ui(self._recommend_bet_plans(game, combos, count) + "\n")
+
+                elapsed = time.time() - started
+                self._ai_last_elapsed_s = float(elapsed)
+                self.after(0, lambda: self._ai_eta_var.set(f"完成，用时 {elapsed:.1f}s"))
             except Exception as e:
-                msg = f"\n生成失败: {e}\n"
-                self.after(0, lambda m=msg: self._write_box(self._lucky_log, m))
+                if str(e) == "cancelled":
+                    self.after(0, lambda: self._write_box(self._lucky_log, "\n已终止生成。\n"))
+                    self.after(0, lambda: self._ai_step_var.set("已终止"))
+                    self.after(0, lambda: self._ai_eta_var.set(""))
+                    self.after(0, lambda: self._ai_progress.set(0))
+                else:
+                    msg = f"\n生成失败: {e}\n"
+                    self.after(0, lambda m=msg: self._write_box(self._lucky_log, m))
             finally:
                 self._lucky_running = False
                 self.after(0, lambda: self._lucky_btn.configure(state="normal", text="生成推荐"))
+                self.after(0, lambda: self._lucky_cancel_btn.configure(state="disabled"))
 
         threading.Thread(target=job, daemon=True).start()
 
