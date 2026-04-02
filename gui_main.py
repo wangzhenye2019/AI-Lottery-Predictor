@@ -27,6 +27,9 @@ from get_data import run as run_get_data
 ctk.set_appearance_mode("System")
 ctk.set_default_color_theme("blue")
 
+HARMONY_FONT_DIR = r"F:\Downloads\HarmonyOS+Sans+字体\HarmonyOS+Sans+字体\HarmonyOS Sans 字体"
+UI_FONT_FAMILY: Optional[str] = None
+
 
 def _setup_matplotlib_chinese() -> None:
     candidates = [
@@ -48,7 +51,76 @@ def _setup_matplotlib_chinese() -> None:
     rcParams["axes.unicode_minus"] = False
 
 
+def _pick_random_font_file(font_dir: str) -> Optional[str]:
+    if not font_dir or not os.path.exists(font_dir):
+        return None
+    font_files: List[str] = []
+    preferred_sc: List[str] = []
+    preferred_tc: List[str] = []
+    preferred_cjk: List[str] = []
+    for root, _, files in os.walk(font_dir):
+        for f in files:
+            lf = f.lower()
+            if lf.endswith('.ttf') or lf.endswith('.otf'):
+                full = os.path.join(root, f)
+                font_files.append(full)
+                p = full.lower()
+                if "sanssc" in p:
+                    preferred_sc.append(full)
+                elif "sanstc" in p:
+                    preferred_tc.append(full)
+                elif "cjk" in p:
+                    preferred_cjk.append(full)
+
+    if preferred_sc:
+        return random.choice(preferred_sc)
+    if preferred_cjk:
+        return random.choice(preferred_cjk)
+    if preferred_tc:
+        return random.choice(preferred_tc)
+    if font_files:
+        return random.choice(font_files)
+    return None
+
+
+def _setup_harmony_font() -> None:
+    global UI_FONT_FAMILY
+
+    font_file = _pick_random_font_file(HARMONY_FONT_DIR)
+    if not font_file:
+        return
+
+    try:
+        try:
+            ctk.FontManager.load_font(font_file)
+        except Exception:
+            pass
+        try:
+            font_manager.fontManager.addfont(font_file)
+        except Exception:
+            pass
+        try:
+            UI_FONT_FAMILY = font_manager.FontProperties(fname=font_file).get_name()
+        except Exception:
+            UI_FONT_FAMILY = "HarmonyOS Sans"
+
+        rcParams["font.sans-serif"] = [UI_FONT_FAMILY]
+        rcParams["axes.unicode_minus"] = False
+
+        _orig = ctk.CTkFont
+
+        def _ctk_font(*args, **kwargs):
+            if UI_FONT_FAMILY and "family" not in kwargs:
+                kwargs["family"] = UI_FONT_FAMILY
+            return _orig(*args, **kwargs)
+
+        ctk.CTkFont = _ctk_font
+    except Exception:
+        UI_FONT_FAMILY = None
+
+
 _setup_matplotlib_chinese()
+_setup_harmony_font()
 
 COLORS = {
     "bg": ("#F5F7FB", "#0B1220"),
@@ -663,11 +735,12 @@ class TermsPanel(ctk.CTkFrame):
 
 
 class PickerPanel(ctk.CTkFrame):
-    def __init__(self, master, cache: DataCache, on_summary_change, get_game_key):
+    def __init__(self, master, cache: DataCache, on_summary_change, get_game_key=None):
         super().__init__(master, fg_color=COLORS["bg"])
         self._cache = cache
         self._on_summary_change = on_summary_change
-        self._get_game_key = get_game_key
+        self._game_display_to_key = {rule.name: key for key, rule in GAME_RULES.items()}
+        self._game_key_to_display = {key: rule.name for key, rule in GAME_RULES.items()}
 
         self.red_selected: List[int] = []
         self.blue_selected: List[int] = []
@@ -691,11 +764,11 @@ class PickerPanel(ctk.CTkFrame):
         self._issue = ctk.CTkLabel(self._top, text="", font=ctk.CTkFont(size=12), text_color=COLORS["subtext"])
         self._issue.grid(row=0, column=2, padx=14, pady=(12, 4), sticky="e")
 
-        self._game_var = ctk.StringVar(value="ssq")
+        self._game_var = ctk.StringVar(value=self._game_key_to_display.get("ssq", "双色球"))
         self._game_menu = ctk.CTkOptionMenu(
             self._top,
             variable=self._game_var,
-            values=["ssq", "dlt", "qlc"],
+            values=[self._game_key_to_display[k] for k in ["ssq", "dlt", "qlc"] if k in self._game_key_to_display],
             fg_color=COLORS["chip"],
             text_color=COLORS["text"],
             button_color=COLORS["primary"],
@@ -746,6 +819,10 @@ class PickerPanel(ctk.CTkFrame):
 
         self._build_mode_common()
         self._change_game(initial=True)
+
+    def get_game_key(self) -> str:
+        display = self._game_var.get().strip()
+        return self._game_display_to_key.get(display, "ssq")
 
     def _build_mode_common(self) -> None:
         for w in self._body.winfo_children():
@@ -948,7 +1025,7 @@ class PickerPanel(ctk.CTkFrame):
         self._lucky_btn.configure(state="disabled", text="生成中...")
         self._write_box(self._lucky_log, "", clear=True)
 
-        game = self._get_game_key()
+        game = self.get_game_key()
         if game == "fc3d":
             self._write_box(self._lucky_log, "福彩3D暂不支持幸运选号面板\n")
             self._lucky_running = False
@@ -1038,7 +1115,7 @@ class PickerPanel(ctk.CTkFrame):
         self._update_summary()
 
     def _simulate_draw(self) -> None:
-        game = self._get_game_key()
+        game = self.get_game_key()
         rule = GAME_RULES.get(game)
         if rule is None:
             return
@@ -1060,10 +1137,7 @@ class PickerPanel(ctk.CTkFrame):
         self._mode_frames[mode].grid(row=0, column=0, sticky="nsew")
 
     def _change_game(self, initial: bool = False) -> None:
-        game_key = self._game_var.get()
-        if game_key not in GAME_RULES:
-            game_key = "ssq"
-            self._game_var.set(game_key)
+        game_key = self.get_game_key()
         self._cache.load(game_key)
         rule = GAME_RULES[game_key]
         self._issue.configure(text=f"第{self._cache.latest_issue}期")
@@ -1077,7 +1151,7 @@ class PickerPanel(ctk.CTkFrame):
             self._switch_mode()
 
     def _update_summary(self) -> None:
-        game_key = self._game_var.get()
+        game_key = self.get_game_key()
         rule = GAME_RULES.get(game_key)
         if rule is None:
             self._summary.configure(text="")
@@ -1110,7 +1184,7 @@ class PickerPanel(ctk.CTkFrame):
         self._prob_text.configure(text="\n".join(lines))
 
     def _done(self) -> None:
-        game_key = self._game_var.get()
+        game_key = self.get_game_key()
         rule = GAME_RULES.get(game_key)
         if rule is None:
             return
@@ -1154,10 +1228,10 @@ class App(ctk.CTk):
 
         self._current_game_for_trend = "ssq"
 
-        self._picker = PickerPanel(tab_picker, self._cache, on_summary_change=lambda: None, get_game_key=lambda: self._picker._game_var.get())
+        self._picker = PickerPanel(tab_picker, self._cache, on_summary_change=lambda: None)
         self._picker.pack(fill="both", expand=True)
 
-        self._trend = TrendPanel(tab_trend, self._cache, get_game_key=lambda: self._picker._game_var.get())
+        self._trend = TrendPanel(tab_trend, self._cache, get_game_key=lambda: self._picker.get_game_key())
         self._trend.pack(fill="both", expand=True)
 
         terms_path = os.path.join(os.path.dirname(__file__), "data", "lottery_terms.json")
