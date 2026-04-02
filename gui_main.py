@@ -557,6 +557,221 @@ class BallGrid(ctk.CTkFrame):
                 self._sub_labels[n].configure(text="热" if n in hot_set else "", text_color=COLORS[self._color_key] if n in hot_set else COLORS["subtext"])
 
 
+class DantuoPanel(ctk.CTkFrame):
+    def __init__(
+        self,
+        master,
+        *,
+        cache: DataCache,
+        get_rule,
+        get_red_dan,
+        set_red_dan,
+        get_red_tuo,
+        set_red_tuo,
+        get_blue,
+        set_blue,
+        on_change,
+    ):
+        super().__init__(master, fg_color="transparent")
+        self._cache = cache
+        self._get_rule = get_rule
+        self._get_red_dan = get_red_dan
+        self._set_red_dan = set_red_dan
+        self._get_red_tuo = get_red_tuo
+        self._set_red_tuo = set_red_tuo
+        self._get_blue = get_blue
+        self._set_blue = set_blue
+        self._on_change = on_change
+        self._mode = ctk.StringVar(value="遗漏")
+
+        self.grid_columnconfigure(0, weight=1)
+
+        self._red_card = ctk.CTkFrame(self, fg_color=COLORS["card"], corner_radius=12, border_width=1, border_color=COLORS["border"])
+        self._red_card.grid(row=0, column=0, sticky="ew")
+        self._red_card.grid_columnconfigure(0, weight=1)
+
+        head = ctk.CTkFrame(self._red_card, fg_color="transparent")
+        head.grid(row=0, column=0, padx=16, pady=(14, 8), sticky="ew")
+        head.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(head, text="红球区（胆拖）", font=ctk.CTkFont(size=16, weight="bold"), text_color=COLORS["text"]).grid(
+            row=0, column=0, sticky="w"
+        )
+        self._red_hint = ctk.CTkLabel(head, text="", font=ctk.CTkFont(size=13), text_color=COLORS["subtext"])
+        self._red_hint.grid(row=1, column=0, sticky="w", pady=(2, 0))
+
+        right = ctk.CTkFrame(head, fg_color="transparent")
+        right.grid(row=0, column=1, rowspan=2, sticky="e")
+        ctk.CTkButton(
+            right,
+            text="清空胆码",
+            width=90,
+            fg_color=COLORS["chip"],
+            hover_color=COLORS["border"],
+            text_color=COLORS["text"],
+            command=self._clear_dan,
+        ).grid(row=0, column=0, padx=(0, 10))
+        ctk.CTkButton(
+            right,
+            text="清空拖码",
+            width=90,
+            fg_color=COLORS["chip"],
+            hover_color=COLORS["border"],
+            text_color=COLORS["text"],
+            command=self._clear_tuo,
+        ).grid(row=0, column=1, padx=(0, 10))
+        ctk.CTkButton(
+            right,
+            text="清空全部",
+            width=90,
+            fg_color=COLORS["chip"],
+            hover_color=COLORS["border"],
+            text_color=COLORS["text"],
+            command=self._clear_all,
+        ).grid(row=0, column=2)
+
+        self._toggle = ctk.CTkSegmentedButton(
+            self._red_card,
+            values=["遗漏", "热号"],
+            variable=self._mode,
+            selected_color=COLORS["red"],
+            selected_hover_color=COLORS["red_hover"],
+            fg_color=COLORS["chip"],
+            unselected_color=COLORS["chip"],
+            unselected_hover_color=COLORS["border"],
+            text_color=COLORS["text"],
+            command=lambda _: self.refresh(),
+        )
+        self._toggle.grid(row=1, column=0, padx=16, pady=(0, 10), sticky="w")
+
+        self._red_grid = ctk.CTkFrame(self._red_card, fg_color="transparent")
+        self._red_grid.grid(row=2, column=0, padx=16, pady=(0, 16), sticky="ew")
+
+        self._red_buttons: Dict[int, ctk.CTkButton] = {}
+        self._red_sub: Dict[int, ctk.CTkLabel] = {}
+        self._build_red_grid()
+
+        self._blue_holder = ctk.CTkFrame(self, fg_color="transparent")
+        self._blue_holder.grid(row=1, column=0, pady=(12, 0), sticky="ew")
+        self._blue_holder.grid_columnconfigure(0, weight=1)
+        self._blue_grid = BallGrid(
+            self._blue_holder,
+            title="蓝球区",
+            max_num=16,
+            min_pick=1,
+            color_key="blue",
+            cache=self._cache,
+            ball_type="blue",
+            get_pick_target=lambda: None,
+            get_selected=self._get_blue,
+            set_selected=self._set_blue,
+            on_change=self._on_change,
+        )
+        self._blue_grid.grid(row=0, column=0, sticky="ew")
+
+        self.refresh()
+
+    def set_rule(self) -> None:
+        rule = self._get_rule()
+        self._blue_grid.set_rule(rule.blue_max, rule.blue_pick)
+        self._rebuild_red_grid()
+        self.refresh()
+
+    def _build_red_grid(self) -> None:
+        rule = self._get_rule()
+        max_num = rule.red_max
+        cols = 11 if max_num >= 33 else 10
+        btn_size = 42
+        for i in range(max_num):
+            n = i + 1
+            r = (i // cols) * 2
+            c = i % cols
+            cell = ctk.CTkFrame(self._red_grid, fg_color="transparent")
+            cell.grid(row=r, column=c, padx=10, pady=(0, 0))
+            b = ctk.CTkButton(
+                cell,
+                text=f"{n:02d}",
+                width=btn_size,
+                height=btn_size,
+                corner_radius=btn_size // 2,
+                fg_color=COLORS["chip"],
+                hover_color=COLORS["border"],
+                text_color=COLORS["text"],
+                command=lambda x=n: self._toggle_red(x),
+            )
+            b.grid(row=0, column=0)
+            lbl = ctk.CTkLabel(cell, text="", font=ctk.CTkFont(size=11), text_color=COLORS["subtext"])
+            lbl.grid(row=1, column=0, pady=(2, 0))
+            self._red_buttons[n] = b
+            self._red_sub[n] = lbl
+
+    def _rebuild_red_grid(self) -> None:
+        for w in self._red_grid.winfo_children():
+            w.destroy()
+        self._red_buttons.clear()
+        self._red_sub.clear()
+        self._build_red_grid()
+
+    def _toggle_red(self, n: int) -> None:
+        dan = set(self._get_red_dan())
+        tuo = set(self._get_red_tuo())
+        if n in dan:
+            dan.remove(n)
+        elif n in tuo:
+            tuo.remove(n)
+        else:
+            rule = self._get_rule()
+            if len(dan) < rule.red_pick - 1:
+                dan.add(n)
+            else:
+                tuo.add(n)
+        dan = dan - tuo
+        tuo = tuo - dan
+        self._set_red_dan(sorted(dan))
+        self._set_red_tuo(sorted(tuo))
+        self.refresh()
+        self._on_change()
+
+    def _clear_dan(self) -> None:
+        self._set_red_dan([])
+        self.refresh()
+        self._on_change()
+
+    def _clear_tuo(self) -> None:
+        self._set_red_tuo([])
+        self.refresh()
+        self._on_change()
+
+    def _clear_all(self) -> None:
+        self._set_red_dan([])
+        self._set_red_tuo([])
+        self._set_blue([])
+        self.refresh()
+        self._on_change()
+
+    def refresh(self) -> None:
+        rule = self._get_rule()
+        dan = set(self._get_red_dan())
+        tuo = set(self._get_red_tuo())
+        need_tuo = max(0, rule.red_pick - len(dan))
+        self._red_hint.configure(text=f"胆码 1-{rule.red_pick - 1} 个，拖码至少 {need_tuo} 个")
+        show_mode = self._mode.get()
+        omission = self._cache.omission_red
+        hot_set = self._cache.hot_red
+        for n, btn in self._red_buttons.items():
+            if n in dan:
+                btn.configure(fg_color=COLORS["danger"], hover_color=COLORS["red_hover"], text_color="#FFFFFF")
+            elif n in tuo:
+                btn.configure(fg_color=COLORS["red"], hover_color=COLORS["red_hover"], text_color="#FFFFFF")
+            else:
+                btn.configure(fg_color=COLORS["chip"], hover_color=COLORS["border"], text_color=COLORS["text"])
+
+            if show_mode == "遗漏":
+                v = omission.get(n, 0)
+                self._red_sub[n].configure(text=str(v), text_color=COLORS["danger"] if v >= 15 else COLORS["subtext"])
+            else:
+                self._red_sub[n].configure(text="热" if n in hot_set else "", text_color=COLORS["red"] if n in hot_set else COLORS["subtext"])
+
+
 class TrendPanel(ctk.CTkFrame):
     def __init__(self, master, cache: DataCache, get_game_key):
         super().__init__(master, fg_color=COLORS["bg"])
@@ -745,6 +960,10 @@ class PickerPanel(ctk.CTkFrame):
         self.red_selected: List[int] = []
         self.blue_selected: List[int] = []
 
+        self.dt_red_dan: List[int] = []
+        self.dt_red_tuo: List[int] = []
+        self.dt_blue: List[int] = []
+
         self.grid_columnconfigure(0, weight=1)
 
         self._top = ctk.CTkFrame(self, fg_color=COLORS["card"], corner_radius=12, border_width=1, border_color=COLORS["border"])
@@ -835,7 +1054,7 @@ class PickerPanel(ctk.CTkFrame):
             self._mode_frames[mode] = f
 
         self._build_normal(self._mode_frames["普通投注"])
-        self._build_placeholder(self._mode_frames["胆拖投注"], "胆拖投注：下一步支持红球胆码/拖码与注数计算")
+        self._build_dantuo(self._mode_frames["胆拖投注"])
         self._build_lucky(self._mode_frames["AI选号"])
         self._build_sim(self._mode_frames["模拟摇奖"])
         self._build_placeholder(self._mode_frames["奖金计算"], "奖金计算：下一步支持按命中情况计算奖级")
@@ -894,6 +1113,22 @@ class PickerPanel(ctk.CTkFrame):
             wraplength=860,
         )
         self._prob_text.grid(row=1, column=0, padx=14, pady=(0, 12), sticky="w")
+
+    def _build_dantuo(self, frame: ctk.CTkFrame) -> None:
+        frame.grid_columnconfigure(0, weight=1)
+        self._dt_panel = DantuoPanel(
+            frame,
+            cache=self._cache,
+            get_rule=lambda: GAME_RULES[self.get_game_key()],
+            get_red_dan=lambda: self.dt_red_dan,
+            set_red_dan=lambda xs: setattr(self, "dt_red_dan", xs),
+            get_red_tuo=lambda: self.dt_red_tuo,
+            set_red_tuo=lambda xs: setattr(self, "dt_red_tuo", xs),
+            get_blue=lambda: self.dt_blue,
+            set_blue=lambda xs: setattr(self, "dt_blue", xs),
+            on_change=self._update_summary,
+        )
+        self._dt_panel.grid(row=0, column=0, sticky="ew")
 
     def _build_lucky(self, frame: ctk.CTkFrame) -> None:
         frame.grid_columnconfigure(0, weight=1)
@@ -1144,8 +1379,13 @@ class PickerPanel(ctk.CTkFrame):
 
         self.red_selected = []
         self.blue_selected = []
+        self.dt_red_dan = []
+        self.dt_red_tuo = []
+        self.dt_blue = []
         self._red_grid.set_rule(rule.red_max, rule.red_pick)
         self._blue_grid.set_rule(rule.blue_max, rule.blue_pick)
+        if hasattr(self, "_dt_panel"):
+            self._dt_panel.set_rule()
         self._update_summary()
         if not initial:
             self._switch_mode()
@@ -1156,6 +1396,22 @@ class PickerPanel(ctk.CTkFrame):
         if rule is None:
             self._summary.configure(text="")
             return
+
+        mode = self._bet_mode.get()
+        if mode == "胆拖投注":
+            dan_n = len(self.dt_red_dan)
+            tuo_n = len(self.dt_red_tuo)
+            blue_n = len(self.dt_blue)
+            need_tuo = max(0, rule.red_pick - dan_n)
+            red_bets = comb(tuo_n, need_tuo) if 1 <= dan_n <= (rule.red_pick - 1) and tuo_n >= need_tuo else 0
+            blue_bets = comb(blue_n, rule.blue_pick) if blue_n >= rule.blue_pick else 0
+            bets = red_bets * blue_bets
+            cost = bets * rule.cost_per_bet
+            self._summary.configure(text=f"胆码{dan_n}个，拖码{tuo_n}个，蓝球{blue_n}个，共{bets}注，共{cost}元")
+            self._prob_text.configure(text="胆拖投注暂不提供奖级概率估算")
+            self._on_summary_change()
+            return
+
         red_n = len(self.red_selected)
         blue_n = len(self.blue_selected)
         bets = comb(red_n, rule.red_pick) * comb(blue_n, rule.blue_pick)
@@ -1188,6 +1444,22 @@ class PickerPanel(ctk.CTkFrame):
         rule = GAME_RULES.get(game_key)
         if rule is None:
             return
+
+        mode = self._bet_mode.get()
+        if mode == "胆拖投注":
+            dan_n = len(self.dt_red_dan)
+            tuo_n = len(self.dt_red_tuo)
+            blue_n = len(self.dt_blue)
+            need_tuo = max(0, rule.red_pick - dan_n)
+            if not (1 <= dan_n <= (rule.red_pick - 1) and tuo_n >= need_tuo and blue_n >= rule.blue_pick):
+                messagebox.showwarning("提示", f"胆码需 1-{rule.red_pick - 1} 个，拖码至少 {need_tuo} 个，蓝球至少 {rule.blue_pick} 个")
+                return
+            dan = " ".join([f"{x:02d}" for x in sorted(self.dt_red_dan)])
+            tuo = " ".join([f"{x:02d}" for x in sorted(self.dt_red_tuo)])
+            blue = " ".join([f"{x:02d}" for x in sorted(self.dt_blue)])
+            messagebox.showinfo("已选择（胆拖）", f"胆码: {dan}\n拖码: {tuo}\n蓝球: {blue}")
+            return
+
         if len(self.red_selected) < rule.red_pick or len(self.blue_selected) < rule.blue_pick:
             messagebox.showwarning("提示", f"至少选择{rule.red_pick}个红球和{rule.blue_pick}个蓝球")
             return
