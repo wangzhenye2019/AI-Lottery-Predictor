@@ -1705,7 +1705,7 @@ class PickerPanel(ctk.CTkFrame):
                     self.after(0, lambda m=msg: self._write_box(self._lucky_log, m))
 
                 strategy = self._lucky_strategy.get().strip()
-                count = int(self._lucky_count.get())
+                count = min(100, max(1, int(self._lucky_count.get())))
 
                 ui(f"策略: {strategy}，目标组数: {count}\n")
                 ui("加载历史数据...\n")
