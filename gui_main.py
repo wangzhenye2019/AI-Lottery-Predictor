@@ -1440,33 +1440,6 @@ class PickerPanel(ctk.CTkFrame):
             width=90,
         ).grid(row=0, column=2, padx=(10, 0), sticky="e")
 
-        self._lucky_fill_index = ctk.StringVar(value="1")
-        ctk.CTkLabel(
-            top,
-            text="填充第",
-            font=ctk.CTkFont(size=13),
-            text_color=COLORS["subtext"],
-        ).grid(row=0, column=3, padx=(10, 0))
-        self._lucky_fill_menu = ctk.CTkOptionMenu(
-            top,
-            variable=self._lucky_fill_index,
-            values=["1"],
-            fg_color=COLORS["chip"],
-            text_color=COLORS["text"],
-            button_color=COLORS["primary"],
-            button_hover_color=COLORS["primary_hover"],
-            dropdown_fg_color=COLORS["card"],
-            dropdown_text_color=COLORS["text"],
-            width=90,
-        )
-        self._lucky_fill_menu.grid(row=0, column=4, padx=(6, 0))
-        ctk.CTkLabel(
-            top,
-            text="组",
-            font=ctk.CTkFont(size=13),
-            text_color=COLORS["subtext"],
-        ).grid(row=0, column=5, padx=(6, 0))
-
         self._lucky_btn = ctk.CTkButton(
             top,
             text="生成推荐",
@@ -1475,7 +1448,7 @@ class PickerPanel(ctk.CTkFrame):
             text_color="#FFFFFF",
             command=self._run_lucky,
         )
-        self._lucky_btn.grid(row=0, column=6, padx=(10, 0))
+        self._lucky_btn.grid(row=0, column=3, padx=(10, 0))
 
         self._lucky_fill_btn = ctk.CTkButton(
             top,
@@ -1485,7 +1458,7 @@ class PickerPanel(ctk.CTkFrame):
             text_color=COLORS["text"],
             command=self._fill_selected_lucky,
         )
-        self._lucky_fill_btn.grid(row=0, column=7, padx=(10, 0))
+        self._lucky_fill_btn.grid(row=0, column=4, padx=(10, 0))
 
         self._lucky_log = ctk.CTkTextbox(
             card,
@@ -1763,13 +1736,6 @@ class PickerPanel(ctk.CTkFrame):
                     )
 
                 self._lucky_last = combos
-                try:
-                    max_idx = min(100, max(1, min(count, len(combos))))
-                    values = [str(i) for i in range(1, max_idx + 1)]
-                    self.after(0, lambda v=values: self._lucky_fill_menu.configure(values=v))
-                    self.after(0, lambda: self._lucky_fill_index.set("1"))
-                except Exception:
-                    pass
                 lines = ["\n结果：\n"]
                 for i, c in enumerate(combos[: max(1, min(count, len(combos)))], 1):
                     lines.append(f"组合{i}: 红球 {c.get('red')} + 蓝球 {c.get('blue')}")
@@ -1787,12 +1753,7 @@ class PickerPanel(ctk.CTkFrame):
         if not getattr(self, "_lucky_last", None):
             messagebox.showinfo("提示", "请先生成推荐组合")
             return
-        try:
-            idx = int((self._lucky_fill_index.get() or "1").strip()) - 1
-        except Exception:
-            idx = 0
-        idx = max(0, min(idx, len(self._lucky_last) - 1))
-        combo = self._lucky_last[idx]
+        combo = self._lucky_last[0]
 
         self.red_selected = sorted([int(x) for x in combo.get('red', [])])
         b = combo.get('blue')
