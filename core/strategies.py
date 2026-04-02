@@ -45,7 +45,17 @@ class StrategyAnalyzer:
             频率字典 {号码：出现次数}
         """
         balls = self.red_balls if ball_type == 'red' else self.blue_balls
-        recent_data = self.data.tail(recent_n)[balls].values.flatten().astype(int)
+        df = self.data
+        if '期数' in df.columns:
+            try:
+                first = int(str(df.iloc[0]['期数']))
+                last = int(str(df.iloc[-1]['期数']))
+                df = df.head(recent_n) if first > last else df.tail(recent_n)
+            except Exception:
+                df = df.tail(recent_n)
+        else:
+            df = df.tail(recent_n)
+        recent_data = df[balls].values.flatten().astype(int)
         counter = Counter(recent_data)
         return dict(counter)
     

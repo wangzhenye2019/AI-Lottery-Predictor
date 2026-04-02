@@ -35,7 +35,9 @@ venv.bak/
 
 # Project specific
 model/
-data/
+data/**
+!data/
+!data/lottery_terms.json
 analysis_output/
 releases/
 *.ckpt

@@ -1,15 +1,26 @@
 # -*- coding:utf-8 -*-
-"""
-Author: BigCat
-Description: AI 彩票预测系统 - Windows 可视化图形界面 (Google App / Material Design 风格)
-"""
-import tkinter as tk
-from tkinter import messagebox
-import threading
-import sys
+"""Author: BigCat"""
+
+import json
+import math
 import os
-import warnings
+import random
+import threading
+import time
+import tkinter as tk
+from dataclasses import dataclass
+from datetime import datetime
+from tkinter import messagebox
+from typing import Dict, List, Optional, Tuple
+
 import customtkinter as ctk
+import pandas as pd
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
+
+from config import data_file_name, model_args, name_path
+from core.strategies import StrategyAnalyzer
+from get_data import run as run_get_data
 
 ctk.set_appearance_mode("System")
 ctk.set_default_color_theme("blue")
@@ -22,320 +33,1122 @@ COLORS = {
     "subtext": ("#5F6368", "#AAB4C2"),
     "primary": ("#1A73E8", "#1A73E8"),
     "primary_hover": ("#1669C1", "#1669C1"),
-    "input_bg": ("#F8FAFC", "#0F172A"),
+    "danger": ("#D93025", "#F87171"),
+    "red": ("#EA4335", "#EA4335"),
+    "red_hover": ("#D93025", "#D93025"),
+    "blue": ("#1A73E8", "#1A73E8"),
+    "blue_hover": ("#1669C1", "#1669C1"),
+    "chip": ("#EEF2FF", "#1F2A44"),
     "log_bg": ("#0F172A", "#0B1220"),
     "log_fg": ("#E5E7EB", "#E5E7EB"),
-    "danger": ("#EF4444", "#F87171"),
 }
 
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
-warnings.filterwarnings('ignore', category=UserWarning, module='tensorflow')
-warnings.filterwarnings('ignore', category=FutureWarning, module='tensorflow')
-warnings.filterwarnings('ignore', module='keras')
-import tensorflow as tf
-tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 
-from loguru import logger
-from get_data import run as run_get_data
-from run_train_model_optimized import run as run_train_optimized
-from run_predict_enhanced import run as run_predict_enhanced
+@dataclass(frozen=True)
+class GameRule:
+    key: str
+    name: str
+    red_max: int
+    red_pick: int
+    blue_max: int
+    blue_pick: int
+    cost_per_bet: int = 2
 
-class TrainArgsMock:
-    def __init__(self, name):
-        self.name = name
-        self.train_test_split = 0.8
-        self.use_early_stopping = True
-        self.patience = 10
-        self.use_lr_decay = True
-        self.decay_rate = 0.95
-        self.save_best_only = True
 
-class TextRedirector(object):
-    """将 stdout 和 stderr 重定向到 CTkTextbox"""
-    def __init__(self, text_widget, tag="stdout"):
-        self.text_widget = text_widget
-        self.tag = tag
+GAME_RULES: Dict[str, GameRule] = {
+    "ssq": GameRule(key="ssq", name="双色球", red_max=33, red_pick=6, blue_max=16, blue_pick=1),
+    "dlt": GameRule(key="dlt", name="大乐透", red_max=35, red_pick=5, blue_max=12, blue_pick=2),
+    "qlc": GameRule(key="qlc", name="七乐彩", red_max=30, red_pick=7, blue_max=30, blue_pick=1),
+}
 
-    def write(self, string):
-        self.text_widget.configure(state='normal')
-        self.text_widget.insert(tk.END, string, self.tag)
-        self.text_widget.see(tk.END)
-        self.text_widget.configure(state='disabled')
-        self.text_widget.update_idletasks()
 
-    def flush(self):
-        pass
+def comb(n: int, k: int) -> int:
+    if k < 0 or k > n:
+        return 0
+    return math.comb(n, k)
 
-class LotteryPredictorApp(ctk.CTk):
+
+def poisson_binomial_pmf(ps: List[float]) -> List[float]:
+    dp = [1.0]
+    for p in ps:
+        nxt = [0.0] * (len(dp) + 1)
+        for i, v in enumerate(dp):
+            nxt[i] += v * (1 - p)
+            nxt[i + 1] += v * p
+        dp = nxt
+    return dp
+
+
+def estimate_ssq_prize_prob(
+    red_selected: List[int],
+    blue_selected: List[int],
+    analyzer: StrategyAnalyzer,
+    rule: GameRule,
+    recent_n: int = 300
+) -> Dict[str, float]:
+    probs_red = analyzer.calculate_probability("red")
+    probs_blue = analyzer.calculate_probability("blue")
+    p_red = [float(probs_red.get(x, rule.red_pick / rule.red_max)) for x in red_selected]
+    p_blue = [float(probs_blue.get(x, rule.blue_pick / rule.blue_max)) for x in blue_selected]
+
+    pmf_red = poisson_binomial_pmf(p_red)
+    pmf_blue = poisson_binomial_pmf(p_blue)
+
+    def p_red_k(k: int) -> float:
+        return pmf_red[k] if 0 <= k < len(pmf_red) else 0.0
+
+    def p_blue_k(k: int) -> float:
+        return pmf_blue[k] if 0 <= k < len(pmf_blue) else 0.0
+
+    if rule.key != "ssq":
+        any_win = 1.0 - (p_red_k(0) * p_blue_k(0))
+        return {
+            "任意中奖(估算)": max(0.0, min(1.0, any_win)),
+        }
+
+    p_b1 = sum(p_blue_k(k) for k in range(1, len(pmf_blue)))
+    p_b0 = p_blue_k(0)
+
+    p6 = p_red_k(6)
+    p5 = p_red_k(5)
+    p4 = p_red_k(4)
+    p3 = p_red_k(3)
+    p2 = p_red_k(2)
+    p1 = p_red_k(1)
+    p0 = p_red_k(0)
+
+    grade1 = p6 * p_b1
+    grade2 = p6 * p_b0
+    grade3 = p5 * p_b1
+    grade4 = (p5 * p_b0) + (p4 * p_b1)
+    grade5 = (p4 * p_b0) + (p3 * p_b1)
+    grade6 = (p2 + p1 + p0) * p_b1
+    any_win = grade1 + grade2 + grade3 + grade4 + grade5 + grade6
+
+    return {
+        "一等奖(6+1)": grade1,
+        "二等奖(6+0)": grade2,
+        "三等奖(5+1)": grade3,
+        "四等奖(5+0或4+1)": grade4,
+        "五等奖(4+0或3+1)": grade5,
+        "六等奖(0-2+1)": grade6,
+        "任意中奖(估算)": any_win,
+    }
+
+
+class DataCache:
     def __init__(self):
-        super().__init__()
-        self.title("AI 彩票预测系统 v2.0 - Material Design")
-        self.geometry("900x650")
-        self.minsize(800, 600)
+        self._game_key: Optional[str] = None
+        self._df: Optional[pd.DataFrame] = None
+        self._analyzer: Optional[StrategyAnalyzer] = None
+        self._omission_red: Dict[int, int] = {}
+        self._omission_blue: Dict[int, int] = {}
+        self._hot_red: set[int] = set()
+        self._hot_blue: set[int] = set()
+        self._latest_issue: str = "未知"
+        self._latest_date: str = ""
 
-        self.configure(fg_color=COLORS["bg"])
-        
-        # 配置网格自适应
+    def load(self, game_key: str) -> None:
+        if self._game_key == game_key and self._df is not None:
+            return
+
+        self._game_key = game_key
+        self._df = None
+        self._analyzer = None
+        self._omission_red = {}
+        self._omission_blue = {}
+        self._hot_red = set()
+        self._hot_blue = set()
+        self._latest_issue = "未知"
+        self._latest_date = ""
+
+        data_path = os.path.join(name_path[game_key]["path"], data_file_name)
+        if not os.path.exists(data_path):
+            run_get_data(game_key)
+
+        if os.path.exists(data_path):
+            df = pd.read_csv(data_path)
+            self._df = df
+            if len(df):
+                self._latest_issue = str(df.iloc[0].get("期数", "未知"))
+                self._latest_date = str(df.iloc[0].get("日期", ""))
+            self._analyzer = StrategyAnalyzer(df)
+            self._omission_red = self._fast_omission(df, "red")
+            self._omission_blue = self._fast_omission(df, "blue")
+            self._hot_red = set(self._analyzer.get_hot_numbers("red", recent_n=80, top_ratio=0.33))
+            self._hot_blue = set(self._analyzer.get_hot_numbers("blue", recent_n=80, top_ratio=0.33))
+
+    @staticmethod
+    def _fast_omission(df: pd.DataFrame, ball_type: str) -> Dict[int, int]:
+        cols = [c for c in df.columns if ("红球" in c if ball_type == "red" else "蓝球" in c)]
+        if not cols:
+            return {}
+        values = df[cols].values.astype(int)
+        max_num = int(values.max()) if values.size else 0
+        total = len(values)
+        newest_first = False
+        if '期数' in df.columns and len(df) >= 2:
+            try:
+                first = int(str(df.iloc[0]['期数']))
+                last = int(str(df.iloc[-1]['期数']))
+                newest_first = first > last
+            except Exception:
+                newest_first = False
+
+        if newest_first:
+            omission = {i: total for i in range(1, max_num + 1)}
+            for idx, row in enumerate(values):
+                for n in row.tolist():
+                    if 1 <= n <= max_num and omission[n] == total:
+                        omission[n] = idx
+            return omission
+
+        last_seen = {i: -1 for i in range(1, max_num + 1)}
+        for idx, row in enumerate(values):
+            for n in row.tolist():
+                if 1 <= n <= max_num:
+                    last_seen[n] = idx
+        omission = {}
+        for n, seen in last_seen.items():
+            omission[n] = (total - 1 - seen) if seen >= 0 else total
+        return omission
+
+    @property
+    def df(self) -> Optional[pd.DataFrame]:
+        return self._df
+
+    @property
+    def analyzer(self) -> Optional[StrategyAnalyzer]:
+        return self._analyzer
+
+    @property
+    def omission_red(self) -> Dict[int, int]:
+        return self._omission_red
+
+    @property
+    def omission_blue(self) -> Dict[int, int]:
+        return self._omission_blue
+
+    @property
+    def hot_red(self) -> set[int]:
+        return self._hot_red
+
+    @property
+    def hot_blue(self) -> set[int]:
+        return self._hot_blue
+
+    @property
+    def latest_issue(self) -> str:
+        return self._latest_issue
+
+    @property
+    def latest_date(self) -> str:
+        return self._latest_date
+
+
+class BallGrid(ctk.CTkFrame):
+    def __init__(
+        self,
+        master,
+        *,
+        title: str,
+        max_num: int,
+        min_pick: int,
+        color_key: str,
+        cache: DataCache,
+        ball_type: str,
+        get_pick_target,
+        get_selected,
+        set_selected,
+        on_change,
+    ):
+        super().__init__(master, fg_color=COLORS["card"], corner_radius=12, border_width=1, border_color=COLORS["border"])
+        self._title = title
+        self._max_num = max_num
+        self._min_pick = min_pick
+        self._color_key = color_key
+        self._cache = cache
+        self._ball_type = ball_type
+        self._get_pick_target = get_pick_target
+        self._get_selected = get_selected
+        self._set_selected = set_selected
+        self._on_change = on_change
+        self._mode = ctk.StringVar(value="遗漏")
+        self._buttons: Dict[int, ctk.CTkButton] = {}
+        self._sub_labels: Dict[int, ctk.CTkLabel] = {}
+
+        self.grid_columnconfigure(0, weight=1)
+        self._header = ctk.CTkFrame(self, fg_color="transparent")
+        self._header.grid(row=0, column=0, padx=16, pady=(14, 8), sticky="ew")
+        self._header.grid_columnconfigure(0, weight=1)
+
+        self._lbl_title = ctk.CTkLabel(self._header, text=title, font=ctk.CTkFont(size=16, weight="bold"), text_color=COLORS["text"])
+        self._lbl_title.grid(row=0, column=0, sticky="w")
+
+        self._lbl_hint = ctk.CTkLabel(
+            self._header,
+            text=f"至少选择{min_pick}个",
+            font=ctk.CTkFont(size=13),
+            text_color=COLORS["subtext"],
+        )
+        self._lbl_hint.grid(row=1, column=0, sticky="w", pady=(2, 0))
+
+        self._right = ctk.CTkFrame(self._header, fg_color="transparent")
+        self._right.grid(row=0, column=1, rowspan=2, sticky="e")
+
+        self._pick_count = ctk.StringVar(value=str(min_pick))
+        self._pick_menu = ctk.CTkOptionMenu(
+            self._right,
+            variable=self._pick_count,
+            values=[str(i) for i in range(min_pick, min(min_pick + 10, max_num) + 1)],
+            width=80,
+            fg_color=COLORS["chip"],
+            text_color=COLORS["text"],
+            button_color=COLORS[color_key],
+            button_hover_color=COLORS[f"{color_key}_hover"],
+            dropdown_fg_color=COLORS["card"],
+            dropdown_text_color=COLORS["text"],
+        )
+        self._pick_menu.grid(row=0, column=0, padx=(0, 10))
+
+        self._btn_random = ctk.CTkButton(
+            self._right,
+            text="机选",
+            width=90,
+            fg_color=COLORS[color_key],
+            hover_color=COLORS[f"{color_key}_hover"],
+            text_color="#FFFFFF",
+            command=self._random_pick,
+        )
+        self._btn_random.grid(row=0, column=1, padx=(0, 10))
+
+        self._btn_clear = ctk.CTkButton(
+            self._right,
+            text="清空",
+            width=70,
+            fg_color=COLORS["chip"],
+            hover_color=COLORS["border"],
+            text_color=COLORS["text"],
+            command=self._clear,
+        )
+        self._btn_clear.grid(row=0, column=2)
+
+        self._toggle = ctk.CTkSegmentedButton(
+            self._header,
+            values=["遗漏", "热号"],
+            variable=self._mode,
+            selected_color=COLORS[color_key],
+            selected_hover_color=COLORS[f"{color_key}_hover"],
+            fg_color=COLORS["chip"],
+            unselected_color=COLORS["chip"],
+            unselected_hover_color=COLORS["border"],
+            text_color=COLORS["text"],
+            command=lambda _: self.refresh(),
+        )
+        self._toggle.grid(row=2, column=0, padx=16, pady=(0, 10), sticky="w")
+
+        self._grid = ctk.CTkFrame(self, fg_color="transparent")
+        self._grid.grid(row=3, column=0, padx=16, pady=(0, 16), sticky="ew")
+
+        self._build_grid()
+
+    def set_rule(self, max_num: int, min_pick: int) -> None:
+        self._max_num = max_num
+        self._min_pick = min_pick
+        self._lbl_hint.configure(text=f"至少选择{min_pick}个")
+        self._pick_menu.configure(values=[str(i) for i in range(min_pick, min(min_pick + 10, max_num) + 1)])
+        if int(self._pick_count.get()) < min_pick:
+            self._pick_count.set(str(min_pick))
+        self._rebuild_grid()
+
+    def _build_grid(self) -> None:
+        cols = 11 if self._max_num >= 33 else 10
+        btn_size = 42
+        pad_x, pad_y = 10, 8
+        for i in range(self._max_num):
+            n = i + 1
+            r = (i // cols) * 2
+            c = i % cols
+            cell = ctk.CTkFrame(self._grid, fg_color="transparent")
+            cell.grid(row=r, column=c, padx=pad_x, pady=(0, 0))
+            b = ctk.CTkButton(
+                cell,
+                text=f"{n:02d}",
+                width=btn_size,
+                height=btn_size,
+                corner_radius=btn_size // 2,
+                fg_color=COLORS["chip"],
+                hover_color=COLORS["border"],
+                text_color=COLORS["text"],
+                command=lambda x=n: self._toggle_number(x),
+            )
+            b.grid(row=0, column=0)
+            lbl = ctk.CTkLabel(cell, text="", font=ctk.CTkFont(size=11), text_color=COLORS["subtext"])
+            lbl.grid(row=1, column=0, pady=(2, 0))
+            self._buttons[n] = b
+            self._sub_labels[n] = lbl
+        self.refresh()
+
+    def _rebuild_grid(self) -> None:
+        for w in self._grid.winfo_children():
+            w.destroy()
+        self._buttons.clear()
+        self._sub_labels.clear()
+        self._build_grid()
+
+    def _toggle_number(self, n: int) -> None:
+        selected = set(self._get_selected())
+        if n in selected:
+            selected.remove(n)
+        else:
+            selected.add(n)
+        self._set_selected(sorted(selected))
+        self.refresh()
+        self._on_change()
+
+    def _random_pick(self) -> None:
+        target = int(self._pick_count.get())
+        if self._ball_type == "red":
+            freqs = self._cache.analyzer.calculate_frequency("red", recent_n=200) if self._cache.analyzer else {}
+        else:
+            freqs = self._cache.analyzer.calculate_frequency("blue", recent_n=200) if self._cache.analyzer else {}
+
+        nums = list(range(1, self._max_num + 1))
+        weights = []
+        total_freq = sum(freqs.values())
+        for n in nums:
+            w = 1.0 + (freqs.get(n, 0) / max(1, total_freq)) * 10.0
+            weights.append(w)
+        s = sum(weights)
+        probs = [w / s for w in weights]
+        picked = set()
+        while len(picked) < min(target, len(nums)):
+            picked.add(random.choices(nums, weights=probs, k=1)[0])
+        self._set_selected(sorted(picked))
+        self.refresh()
+        self._on_change()
+
+    def _clear(self) -> None:
+        self._set_selected([])
+        self.refresh()
+        self._on_change()
+
+    def refresh(self) -> None:
+        selected = set(self._get_selected())
+        show_mode = self._mode.get()
+        omission = self._cache.omission_red if self._ball_type == "red" else self._cache.omission_blue
+        hot_set = self._cache.hot_red if self._ball_type == "red" else self._cache.hot_blue
+        for n, btn in self._buttons.items():
+            is_sel = n in selected
+            if is_sel:
+                btn.configure(
+                    fg_color=COLORS[self._color_key],
+                    hover_color=COLORS[f"{self._color_key}_hover"],
+                    text_color="#FFFFFF",
+                )
+            else:
+                btn.configure(
+                    fg_color=COLORS["chip"],
+                    hover_color=COLORS["border"],
+                    text_color=COLORS["text"],
+                )
+
+            if show_mode == "遗漏":
+                v = omission.get(n, 0)
+                self._sub_labels[n].configure(text=str(v), text_color=COLORS["danger"] if v >= 15 else COLORS["subtext"])
+            else:
+                self._sub_labels[n].configure(text="热" if n in hot_set else "", text_color=COLORS[self._color_key] if n in hot_set else COLORS["subtext"])
+
+
+class TrendPanel(ctk.CTkFrame):
+    def __init__(self, master, cache: DataCache, get_game_key):
+        super().__init__(master, fg_color=COLORS["bg"])
+        self._cache = cache
+        self._get_game_key = get_game_key
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_rowconfigure(0, weight=1)
+
+        self._left = ctk.CTkFrame(self, fg_color=COLORS["card"], corner_radius=12, border_width=1, border_color=COLORS["border"])
+        self._left.grid(row=0, column=0, padx=(0, 12), sticky="ns")
+        self._right = ctk.CTkFrame(self, fg_color=COLORS["card"], corner_radius=12, border_width=1, border_color=COLORS["border"])
+        self._right.grid(row=0, column=1, sticky="nsew")
+        self._right.grid_rowconfigure(0, weight=1)
+        self._right.grid_columnconfigure(0, weight=1)
+
+        self._chart_type = ctk.StringVar(value="综合分布图")
+        self._btns: Dict[str, ctk.CTkButton] = {}
+        items = [
+            "综合分布图",
+            "蓝球综合走势图",
+            "红球和值走势图",
+            "红球三区分布图",
+        ]
+        ctk.CTkLabel(self._left, text="走势图", font=ctk.CTkFont(size=16, weight="bold"), text_color=COLORS["text"]).grid(
+            row=0, column=0, padx=14, pady=(14, 10), sticky="w"
+        )
+        for idx, name in enumerate(items, start=1):
+            b = ctk.CTkButton(
+                self._left,
+                text=name,
+                fg_color=COLORS["chip"],
+                hover_color=COLORS["border"],
+                text_color=COLORS["text"],
+                anchor="w",
+                width=190,
+                command=lambda x=name: self._select(x),
+            )
+            b.grid(row=idx, column=0, padx=14, pady=6, sticky="ew")
+            self._btns[name] = b
+
+        self._fig = Figure(figsize=(6.5, 4.5), dpi=100)
+        self._ax = self._fig.add_subplot(111)
+        self._canvas = FigureCanvasTkAgg(self._fig, master=self._right)
+        self._canvas.get_tk_widget().grid(row=0, column=0, padx=14, pady=14, sticky="nsew")
+
+        self._select(items[0])
+
+    def _select(self, name: str) -> None:
+        self._chart_type.set(name)
+        for n, b in self._btns.items():
+            if n == name:
+                b.configure(fg_color=COLORS["primary"], hover_color=COLORS["primary_hover"], text_color="#FFFFFF")
+            else:
+                b.configure(fg_color=COLORS["chip"], hover_color=COLORS["border"], text_color=COLORS["text"])
+        self.render()
+
+    def render(self) -> None:
+        game_key = self._get_game_key()
+        self._cache.load(game_key)
+        df = self._cache.df
+        self._ax.clear()
+        if df is None or not len(df):
+            self._ax.text(0.5, 0.5, "暂无数据", ha="center", va="center")
+            self._canvas.draw()
+            return
+
+        chart = self._chart_type.get()
+        tail_n = 80
+        sub = df.tail(tail_n).copy()
+        red_cols = [c for c in sub.columns if "红球" in c]
+        blue_cols = [c for c in sub.columns if "蓝球" in c]
+        x = list(range(len(sub)))
+
+        if chart == "综合分布图":
+            reds = sub[red_cols].values.flatten().astype(int)
+            self._ax.hist(reds, bins=max(10, int(reds.max())), color="#1A73E8", alpha=0.9)
+            self._ax.set_title("红球综合分布(近80期)")
+            self._ax.set_xlabel("号码")
+            self._ax.set_ylabel("出现次数")
+        elif chart == "蓝球综合走势图":
+            if not blue_cols:
+                self._ax.text(0.5, 0.5, "该玩法无蓝球走势", ha="center", va="center")
+            else:
+                blue = sub[blue_cols].values[:, 0].astype(int)
+                self._ax.plot(x, blue, color="#EA4335", linewidth=2)
+                self._ax.set_title("蓝球走势图(近80期)")
+                self._ax.set_xlabel("期序")
+                self._ax.set_ylabel("蓝球")
+        elif chart == "红球和值走势图":
+            sums = sub[red_cols].sum(axis=1).astype(int).tolist()
+            self._ax.plot(x, sums, color="#1A73E8", linewidth=2)
+            self._ax.set_title("红球和值走势(近80期)")
+            self._ax.set_xlabel("期序")
+            self._ax.set_ylabel("和值")
+        elif chart == "红球三区分布图":
+            rule = GAME_RULES.get(game_key)
+            if rule is None:
+                self._ax.text(0.5, 0.5, "该玩法暂不支持三区分布", ha="center", va="center")
+            else:
+                cut1 = rule.red_max // 3
+                cut2 = cut1 * 2
+                rows = sub[red_cols].values.astype(int)
+                a, b, c = [], [], []
+                for row in rows:
+                    a.append(int(((row >= 1) & (row <= cut1)).sum()))
+                    b.append(int(((row > cut1) & (row <= cut2)).sum()))
+                    c.append(int((row > cut2).sum()))
+                self._ax.stackplot(x, a, b, c, labels=["一区", "二区", "三区"], colors=["#1A73E8", "#34A853", "#FBBC04"], alpha=0.9)
+                self._ax.legend(loc="upper right")
+                self._ax.set_title("红球三区分布(近80期)")
+                self._ax.set_xlabel("期序")
+                self._ax.set_ylabel("个数")
+
+        self._ax.grid(True, alpha=0.25)
+        self._fig.tight_layout()
+        self._canvas.draw()
+
+
+class TermsPanel(ctk.CTkFrame):
+    def __init__(self, master, terms_path: str):
+        super().__init__(master, fg_color=COLORS["bg"])
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
-        
-        # ----------------------------------------
-        # 顶部：控制卡片面板 (Google Material 风格)
-        # ----------------------------------------
-        self.control_frame = ctk.CTkFrame(
-            self,
-            corner_radius=15,
+        self._terms_path = terms_path
+        self._terms = self._load_terms()
+
+        head = ctk.CTkFrame(self, fg_color=COLORS["card"], corner_radius=12, border_width=1, border_color=COLORS["border"])
+        head.grid(row=0, column=0, sticky="ew")
+        head.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(head, text="彩票术语", font=ctk.CTkFont(size=16, weight="bold"), text_color=COLORS["text"]).grid(
+            row=0, column=0, padx=14, pady=14, sticky="w"
+        )
+        self._q = ctk.StringVar(value="")
+        self._search = ctk.CTkEntry(
+            head,
+            textvariable=self._q,
+            placeholder_text="搜索术语，例如：胆拖、和值、振幅…",
             fg_color=COLORS["card"],
-            border_width=1,
             border_color=COLORS["border"],
-        )
-        self.control_frame.grid(row=0, column=0, padx=20, pady=(20, 10), sticky="ew")
-        
-        # 内部网格布局
-        self.control_frame.grid_columnconfigure((1, 3, 5), weight=1)
-        
-        # 标题
-        self.lbl_title = ctk.CTkLabel(
-            self.control_frame, 
-            text="AI 智能预测参数配置",
-            font=ctk.CTkFont(size=20, weight="bold"),
             text_color=COLORS["text"],
         )
-        self.lbl_title.grid(row=0, column=0, columnspan=6, padx=20, pady=(20, 10), sticky="w")
-        
-        # 玩法选择
-        self.lbl_game = ctk.CTkLabel(
-            self.control_frame,
-            text="彩票玩法:",
-            font=ctk.CTkFont(size=14),
-            text_color=COLORS["subtext"],
+        self._search.grid(row=0, column=1, padx=(0, 14), pady=14, sticky="ew")
+        self._search.bind("<KeyRelease>", lambda _: self._render())
+
+        self._list = ctk.CTkScrollableFrame(self, fg_color=COLORS["card"], corner_radius=12, border_width=1, border_color=COLORS["border"])
+        self._list.grid(row=1, column=0, pady=(12, 0), sticky="nsew")
+        self._render()
+
+    def _load_terms(self) -> List[Dict[str, str]]:
+        if os.path.exists(self._terms_path):
+            with open(self._terms_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        return []
+
+    def _render(self) -> None:
+        q = self._q.get().strip()
+        for w in self._list.winfo_children():
+            w.destroy()
+        items = self._terms
+        if q:
+            items = [t for t in items if q in t.get("term", "") or q in t.get("desc", "")]
+        for idx, t in enumerate(items):
+            card = ctk.CTkFrame(self._list, fg_color="transparent")
+            card.grid(row=idx, column=0, padx=14, pady=(10 if idx == 0 else 6, 6), sticky="ew")
+            title = ctk.CTkLabel(card, text=t.get("term", ""), font=ctk.CTkFont(size=15, weight="bold"), text_color=COLORS["text"])
+            title.grid(row=0, column=0, sticky="w")
+            desc = ctk.CTkLabel(
+                card,
+                text=t.get("desc", ""),
+                font=ctk.CTkFont(size=13),
+                text_color=COLORS["subtext"],
+                wraplength=820,
+                justify="left",
+            )
+            desc.grid(row=1, column=0, pady=(2, 0), sticky="w")
+
+
+class PickerPanel(ctk.CTkFrame):
+    def __init__(self, master, cache: DataCache, on_summary_change, get_game_key):
+        super().__init__(master, fg_color=COLORS["bg"])
+        self._cache = cache
+        self._on_summary_change = on_summary_change
+        self._get_game_key = get_game_key
+
+        self.red_selected: List[int] = []
+        self.blue_selected: List[int] = []
+
+        self.grid_columnconfigure(0, weight=1)
+
+        self._top = ctk.CTkFrame(self, fg_color=COLORS["card"], corner_radius=12, border_width=1, border_color=COLORS["border"])
+        self._top.grid(row=0, column=0, sticky="ew")
+        self._top.grid_columnconfigure(2, weight=1)
+
+        self._title = ctk.CTkLabel(self._top, text="选号", font=ctk.CTkFont(size=18, weight="bold"), text_color=COLORS["text"])
+        self._title.grid(row=0, column=0, padx=14, pady=(12, 4), sticky="w")
+        self._warn = ctk.CTkLabel(
+            self._top,
+            text="模拟投注为虚拟玩法，切勿当真",
+            font=ctk.CTkFont(size=12),
+            text_color=COLORS["danger"],
         )
-        self.lbl_game.grid(row=1, column=0, padx=(20, 5), pady=10, sticky="w")
-        self.game_var = ctk.StringVar(value="ssq (双色球)")
-        self.game_combo = ctk.CTkOptionMenu(
-            self.control_frame, 
-            variable=self.game_var, 
-            values=["ssq (双色球)", "dlt (大乐透)", "qlc (七乐彩)", "fc3d (福彩3D)"],
-            font=ctk.CTkFont(size=13),
-            fg_color=COLORS["input_bg"],
-            text_color=COLORS["text"],
-            button_color=COLORS["primary"],
-            button_hover_color=COLORS["primary_hover"],
-            dropdown_fg_color=COLORS["card"],
-            dropdown_text_color=COLORS["text"],
-            dynamic_resizing=False,
-            width=140
-        )
-        self.game_combo.grid(row=1, column=1, padx=(0, 20), pady=10, sticky="w")
-        
-        # 策略选择
-        self.lbl_strategy = ctk.CTkLabel(
-            self.control_frame,
-            text="预测策略:",
-            font=ctk.CTkFont(size=14),
-            text_color=COLORS["subtext"],
-        )
-        self.lbl_strategy.grid(row=1, column=2, padx=(10, 5), pady=10, sticky="w")
-        self.strategy_var = ctk.StringVar(value="hybrid (混合分析)")
-        self.strategy_combo = ctk.CTkOptionMenu(
-            self.control_frame, 
-            variable=self.strategy_var, 
-            values=["hybrid (混合分析)", "model_only (仅AI模型)", "strategy_only (仅统计算法)"],
-            font=ctk.CTkFont(size=13),
-            fg_color=COLORS["input_bg"],
-            text_color=COLORS["text"],
-            button_color=COLORS["primary"],
-            button_hover_color=COLORS["primary_hover"],
-            dropdown_fg_color=COLORS["card"],
-            dropdown_text_color=COLORS["text"],
-            dynamic_resizing=False,
-            width=180
-        )
-        self.strategy_combo.grid(row=1, column=3, padx=(0, 20), pady=10, sticky="w")
-        
-        # 生成组数
-        self.lbl_combo = ctk.CTkLabel(
-            self.control_frame,
-            text="生成组数:",
-            font=ctk.CTkFont(size=14),
-            text_color=COLORS["subtext"],
-        )
-        self.lbl_combo.grid(row=1, column=4, padx=(10, 5), pady=10, sticky="w")
-        self.combo_num_var = ctk.StringVar(value="5")
-        self.combo_entry = ctk.CTkOptionMenu(
-            self.control_frame, 
-            variable=self.combo_num_var, 
-            values=[str(i) for i in range(1, 21)],
-            font=ctk.CTkFont(size=13),
-            fg_color=COLORS["input_bg"],
+        self._warn.grid(row=1, column=0, padx=14, pady=(0, 12), sticky="w")
+
+        self._issue = ctk.CTkLabel(self._top, text="", font=ctk.CTkFont(size=12), text_color=COLORS["subtext"])
+        self._issue.grid(row=0, column=2, padx=14, pady=(12, 4), sticky="e")
+
+        self._game_var = ctk.StringVar(value="ssq")
+        self._game_menu = ctk.CTkOptionMenu(
+            self._top,
+            variable=self._game_var,
+            values=["ssq", "dlt", "qlc"],
+            fg_color=COLORS["chip"],
             text_color=COLORS["text"],
             button_color=COLORS["primary"],
             button_hover_color=COLORS["primary_hover"],
             dropdown_fg_color=COLORS["card"],
             dropdown_text_color=COLORS["text"],
-            dynamic_resizing=False,
-            width=80
+            width=90,
+            command=lambda _: self._change_game(),
         )
-        self.combo_entry.grid(row=1, column=5, padx=(0, 20), pady=10, sticky="w")
-        
-        # 是否训练模型 (使用 Switch 开关，更符合现代 App 风格)
-        self.train_var = ctk.BooleanVar(value=False)
-        self.sw_train = ctk.CTkSwitch(
-            self.control_frame, 
-            text="预测前重新训练模型 (耗时较长)", 
-            variable=self.train_var,
-            font=ctk.CTkFont(size=14),
-            text_color=COLORS["subtext"],
-            fg_color=COLORS["border"],
-            progress_color=COLORS["primary"],
-            button_color=COLORS["primary"],
-            button_hover_color=COLORS["primary_hover"],
+        self._game_menu.grid(row=1, column=2, padx=14, pady=(0, 12), sticky="e")
+
+        self._bet_mode = ctk.StringVar(value="普通投注")
+        self._modes = ctk.CTkSegmentedButton(
+            self._top,
+            values=["普通投注", "胆拖投注", "幸运选号", "模拟摇奖", "奖金计算"],
+            variable=self._bet_mode,
+            selected_color=COLORS["danger"],
+            selected_hover_color=COLORS["danger"],
+            fg_color=COLORS["chip"],
+            unselected_color=COLORS["chip"],
+            unselected_hover_color=COLORS["border"],
+            text_color=COLORS["text"],
+            command=lambda _: self._switch_mode(),
         )
-        self.sw_train.grid(row=2, column=0, columnspan=3, padx=20, pady=(15, 20), sticky="w")
-        
-        # 运行按钮 (突出显示的 Primary Button)
-        self.run_btn = ctk.CTkButton(
-            self.control_frame, 
-            text="开始执行",
-            font=ctk.CTkFont(size=15, weight="bold"),
-            height=40,
-            corner_radius=8,
+        self._modes.grid(row=2, column=0, columnspan=3, padx=14, pady=(0, 14), sticky="ew")
+
+        self._body = ctk.CTkFrame(self, fg_color="transparent")
+        self._body.grid(row=1, column=0, pady=(12, 0), sticky="nsew")
+        self._body.grid_columnconfigure(0, weight=1)
+
+        self._footer = ctk.CTkFrame(self, fg_color=COLORS["card"], corner_radius=12, border_width=1, border_color=COLORS["border"])
+        self._footer.grid(row=2, column=0, pady=(12, 0), sticky="ew")
+        self._footer.grid_columnconfigure(0, weight=1)
+        self._summary = ctk.CTkLabel(self._footer, text="", font=ctk.CTkFont(size=13), text_color=COLORS["text"])
+        self._summary.grid(row=0, column=0, padx=14, pady=14, sticky="w")
+        self._btn_done = ctk.CTkButton(
+            self._footer,
+            text="选好了",
+            width=120,
             fg_color=COLORS["primary"],
             hover_color=COLORS["primary_hover"],
             text_color="#FFFFFF",
-            command=self.start_thread
+            command=self._done,
         )
-        self.run_btn.grid(row=2, column=4, columnspan=2, padx=20, pady=(15, 20), sticky="e")
-        
-        # ----------------------------------------
-        # 底部：日志面板 (Card Style)
-        # ----------------------------------------
-        self.log_frame = ctk.CTkFrame(
-            self,
-            corner_radius=15,
-            fg_color=COLORS["card"],
-            border_width=1,
-            border_color=COLORS["border"],
+        self._btn_done.grid(row=0, column=1, padx=14, pady=14, sticky="e")
+
+        self._mode_frames: Dict[str, ctk.CTkFrame] = {}
+
+        self._build_mode_common()
+        self._change_game(initial=True)
+
+    def _build_mode_common(self) -> None:
+        for w in self._body.winfo_children():
+            w.destroy()
+        self._mode_frames.clear()
+
+        for mode in ["普通投注", "胆拖投注", "幸运选号", "模拟摇奖", "奖金计算"]:
+            f = ctk.CTkFrame(self._body, fg_color="transparent")
+            f.grid(row=0, column=0, sticky="nsew")
+            self._mode_frames[mode] = f
+
+        self._build_normal(self._mode_frames["普通投注"])
+        self._build_placeholder(self._mode_frames["胆拖投注"], "胆拖投注：下一步支持红球胆码/拖码与注数计算")
+        self._build_lucky(self._mode_frames["幸运选号"])
+        self._build_sim(self._mode_frames["模拟摇奖"])
+        self._build_placeholder(self._mode_frames["奖金计算"], "奖金计算：下一步支持按命中情况计算奖级")
+
+        self._switch_mode()
+
+    def _build_placeholder(self, frame: ctk.CTkFrame, text: str) -> None:
+        card = ctk.CTkFrame(frame, fg_color=COLORS["card"], corner_radius=12, border_width=1, border_color=COLORS["border"])
+        card.pack(fill="both", expand=True)
+        ctk.CTkLabel(card, text=text, font=ctk.CTkFont(size=14), text_color=COLORS["subtext"]).pack(padx=14, pady=14)
+
+    def _build_normal(self, frame: ctk.CTkFrame) -> None:
+        frame.grid_columnconfigure(0, weight=1)
+        self._red_grid = BallGrid(
+            frame,
+            title="红球区",
+            max_num=33,
+            min_pick=6,
+            color_key="red",
+            cache=self._cache,
+            ball_type="red",
+            get_pick_target=lambda: None,
+            get_selected=lambda: self.red_selected,
+            set_selected=lambda xs: setattr(self, "red_selected", xs),
+            on_change=self._update_summary,
         )
-        self.log_frame.grid(row=1, column=0, padx=20, pady=(10, 20), sticky="nsew")
-        self.log_frame.grid_columnconfigure(0, weight=1)
-        self.log_frame.grid_rowconfigure(1, weight=1)
-        
-        self.lbl_log_title = ctk.CTkLabel(
-            self.log_frame, 
-            text="执行日志",
-            font=ctk.CTkFont(size=16, weight="bold"),
+        self._red_grid.grid(row=0, column=0, sticky="ew")
+
+        self._blue_grid = BallGrid(
+            frame,
+            title="蓝球区",
+            max_num=16,
+            min_pick=1,
+            color_key="blue",
+            cache=self._cache,
+            ball_type="blue",
+            get_pick_target=lambda: None,
+            get_selected=lambda: self.blue_selected,
+            set_selected=lambda xs: setattr(self, "blue_selected", xs),
+            on_change=self._update_summary,
+        )
+        self._blue_grid.grid(row=1, column=0, pady=(12, 0), sticky="ew")
+
+        self._prob_card = ctk.CTkFrame(frame, fg_color=COLORS["card"], corner_radius=12, border_width=1, border_color=COLORS["border"])
+        self._prob_card.grid(row=2, column=0, pady=(12, 0), sticky="ew")
+        self._prob_card.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(self._prob_card, text="中奖概率(估算)", font=ctk.CTkFont(size=14, weight="bold"), text_color=COLORS["text"]).grid(
+            row=0, column=0, padx=14, pady=(12, 6), sticky="w"
+        )
+        self._prob_text = ctk.CTkLabel(
+            self._prob_card,
+            text="请选择号码后自动估算",
+            font=ctk.CTkFont(size=13),
+            text_color=COLORS["subtext"],
+            justify="left",
+            wraplength=860,
+        )
+        self._prob_text.grid(row=1, column=0, padx=14, pady=(0, 12), sticky="w")
+
+    def _build_lucky(self, frame: ctk.CTkFrame) -> None:
+        frame.grid_columnconfigure(0, weight=1)
+        card = ctk.CTkFrame(frame, fg_color=COLORS["card"], corner_radius=12, border_width=1, border_color=COLORS["border"])
+        card.grid(row=0, column=0, sticky="nsew")
+        card.grid_columnconfigure(0, weight=1)
+
+        top = ctk.CTkFrame(card, fg_color="transparent")
+        top.grid(row=0, column=0, padx=14, pady=14, sticky="ew")
+        top.grid_columnconfigure(2, weight=1)
+        ctk.CTkLabel(top, text="幸运选号", font=ctk.CTkFont(size=16, weight="bold"), text_color=COLORS["text"]).grid(
+            row=0, column=0, sticky="w"
+        )
+
+        self._lucky_strategy = ctk.StringVar(value="hybrid")
+        ctk.CTkOptionMenu(
+            top,
+            variable=self._lucky_strategy,
+            values=["hybrid", "model_only", "strategy_only"],
+            fg_color=COLORS["chip"],
             text_color=COLORS["text"],
+            button_color=COLORS["primary"],
+            button_hover_color=COLORS["primary_hover"],
+            dropdown_fg_color=COLORS["card"],
+            dropdown_text_color=COLORS["text"],
+            width=140,
+        ).grid(row=0, column=1, padx=(10, 0))
+
+        self._lucky_count = ctk.StringVar(value="5")
+        ctk.CTkOptionMenu(
+            top,
+            variable=self._lucky_count,
+            values=[str(i) for i in range(1, 11)],
+            fg_color=COLORS["chip"],
+            text_color=COLORS["text"],
+            button_color=COLORS["primary"],
+            button_hover_color=COLORS["primary_hover"],
+            dropdown_fg_color=COLORS["card"],
+            dropdown_text_color=COLORS["text"],
+            width=90,
+        ).grid(row=0, column=2, padx=(10, 0), sticky="e")
+
+        self._lucky_btn = ctk.CTkButton(
+            top,
+            text="生成推荐",
+            fg_color=COLORS["primary"],
+            hover_color=COLORS["primary_hover"],
+            text_color="#FFFFFF",
+            command=self._run_lucky,
         )
-        self.lbl_log_title.grid(row=0, column=0, padx=20, pady=(15, 5), sticky="w")
-        
-        # 文本框使用固定等宽字体，背景稍微暗一点，更像终端
-        self.log_text = ctk.CTkTextbox(
-            self.log_frame, 
-            font=ctk.CTkFont(family="Consolas", size=13),
-            state='disabled', 
-            wrap="word",
-            corner_radius=8,
+        self._lucky_btn.grid(row=0, column=3, padx=(10, 0))
+
+        self._lucky_fill_btn = ctk.CTkButton(
+            top,
+            text="填充到选号",
+            fg_color=COLORS["chip"],
+            hover_color=COLORS["border"],
+            text_color=COLORS["text"],
+            command=self._fill_first_lucky,
+        )
+        self._lucky_fill_btn.grid(row=0, column=4, padx=(10, 0))
+
+        self._lucky_log = ctk.CTkTextbox(
+            card,
+            state="disabled",
+            height=260,
             fg_color=COLORS["log_bg"],
             text_color=COLORS["log_fg"],
             border_width=1,
             border_color=COLORS["border"],
-            scrollbar_button_color=COLORS["primary"],
-            scrollbar_button_hover_color=COLORS["primary_hover"],
+            corner_radius=8,
+            font=ctk.CTkFont(family="Consolas", size=12),
         )
-        self.log_text.grid(row=1, column=0, padx=20, pady=(5, 20), sticky="nsew")
+        self._lucky_log.grid(row=1, column=0, padx=14, pady=(0, 14), sticky="nsew")
 
-        try:
-            self.log_text._textbox.tag_configure("stdout", foreground=COLORS["log_fg"][0])
-            self.log_text._textbox.tag_configure("stderr", foreground=COLORS["danger"][0])
-        except Exception:
-            pass
-        
-        # ----------------------------------------
-        # 日志重定向
-        # ----------------------------------------
-        sys.stdout = TextRedirector(self.log_text, "stdout")
-        sys.stderr = TextRedirector(self.log_text, "stderr")
-        logger.remove()
-        logger.add(sys.stdout, format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}", level="INFO")
-        
-        self.is_running = False
+        self._lucky_last: List[Dict] = []
 
-    def start_thread(self):
-        if self.is_running:
-            messagebox.showwarning("警告", "任务正在执行中，请耐心等待！")
+    def _build_sim(self, frame: ctk.CTkFrame) -> None:
+        frame.grid_columnconfigure(0, weight=1)
+        card = ctk.CTkFrame(frame, fg_color=COLORS["card"], corner_radius=12, border_width=1, border_color=COLORS["border"])
+        card.grid(row=0, column=0, sticky="nsew")
+        card.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(card, text="模拟摇奖", font=ctk.CTkFont(size=16, weight="bold"), text_color=COLORS["text"]).grid(
+            row=0, column=0, padx=14, pady=(14, 6), sticky="w"
+        )
+        self._sim_text = ctk.CTkLabel(
+            card,
+            text="点击按钮将随机摇出一注，并与当前选号对比（仅供娱乐）",
+            font=ctk.CTkFont(size=13),
+            text_color=COLORS["subtext"],
+        )
+        self._sim_text.grid(row=1, column=0, padx=14, pady=(0, 10), sticky="w")
+        self._sim_btn = ctk.CTkButton(
+            card,
+            text="开始摇奖",
+            fg_color=COLORS["danger"],
+            hover_color=COLORS["danger"],
+            text_color="#FFFFFF",
+            command=self._simulate_draw,
+        )
+        self._sim_btn.grid(row=2, column=0, padx=14, pady=(0, 12), sticky="w")
+
+        self._sim_log = ctk.CTkTextbox(
+            card,
+            state="disabled",
+            height=260,
+            fg_color=COLORS["log_bg"],
+            text_color=COLORS["log_fg"],
+            border_width=1,
+            border_color=COLORS["border"],
+            corner_radius=8,
+            font=ctk.CTkFont(family="Consolas", size=12),
+        )
+        self._sim_log.grid(row=3, column=0, padx=14, pady=(0, 14), sticky="nsew")
+
+    def _write_box(self, box: ctk.CTkTextbox, text: str, clear: bool = False) -> None:
+        box.configure(state="normal")
+        if clear:
+            box.delete("1.0", tk.END)
+        box.insert(tk.END, text)
+        box.see(tk.END)
+        box.configure(state="disabled")
+
+    def _run_lucky(self) -> None:
+        if getattr(self, "_lucky_running", False):
             return
-            
-        self.is_running = True
-        self.run_btn.configure(state="disabled", text="⏳ 执行中...")
-        self.log_text.configure(state='normal')
-        self.log_text.delete("1.0", tk.END)
-        self.log_text.configure(state='disabled')
-        
-        t = threading.Thread(target=self.run_workflow)
-        t.daemon = True
-        t.start()
+        self._lucky_running = True
+        self._lucky_btn.configure(state="disabled", text="生成中...")
+        self._write_box(self._lucky_log, "", clear=True)
 
-    def run_workflow(self):
-        try:
-            game_name = self.game_var.get().split()[0]
-            strategy = self.strategy_var.get().split()[0]
-            n_combinations = int(self.combo_num_var.get())
-            do_train = self.train_var.get()
-            
-            game_names = {'ssq': '双色球', 'dlt': '大乐透', 'qlc': '七乐彩', 'fc3d': '福彩3D'}
-            
-            print("="*60)
-            print(f"🚀 开始执行 AI 智能彩票预测系统 ({game_names.get(game_name, game_name)})")
-            print("="*60 + "\n")
-            
-            print(f"[1/3] 正在获取 {game_name} 最新开奖数据...\n" + "-"*40)
-            run_get_data(game_name)
-            
-            if do_train:
-                print(f"\n[2/3] 正在重新训练 AI 模型 (请耐心等待)...\n" + "-"*40)
-                run_train_optimized(TrainArgsMock(game_name))
-            else:
-                print("\n[2/3] 跳过模型训练，使用已有模型权重...\n" + "-"*40)
-                
-            print(f"\n[3/3] 正在执行智能预测 (策略: {strategy})...\n" + "-"*40)
-            run_predict_enhanced(game_name, strategy, n_combinations)
-            
-            print("\n" + "="*60)
-            print("🎉 全部流程执行完毕，祝您好运！")
-            print("="*60 + "\n")
-            
-            # 使用 after 确保 messagebox 在主线程弹出
-            self.after(0, lambda: messagebox.showinfo("成功", "流程执行完毕！请查看日志框内的预测结果。"))
-            
-        except Exception as e:
-            print(f"\n❌ 执行过程中发生错误: {e}", file=sys.stderr)
-            import traceback
-            traceback.print_exc()
-            self.after(0, lambda: messagebox.showerror("错误", f"执行失败:\n{str(e)}"))
-        finally:
-            self.is_running = False
-            self.after(0, lambda: self.run_btn.configure(state="normal", text="▶ 一键开始执行"))
+        game = self._get_game_key()
+        if game == "fc3d":
+            self._write_box(self._lucky_log, "福彩3D暂不支持幸运选号面板\n")
+            self._lucky_running = False
+            self._lucky_btn.configure(state="normal", text="生成推荐")
+            return
+
+        def job():
+            try:
+                strategy = self._lucky_strategy.get().strip()
+                count = int(self._lucky_count.get())
+
+                self._cache.load(game)
+                df = self._cache.df
+                if df is None or not len(df):
+                    self.after(0, lambda: self._write_box(self._lucky_log, "暂无历史数据\n"))
+                    return
+                from core.strategies import LotteryStrategy
+                from services.predict_service import PredictService
+
+                strategy_engine = LotteryStrategy(df)
+                recommendation = strategy_engine.recommend_balls(strategy='hybrid')
+                combos: List[Dict] = []
+
+                if strategy == 'strategy_only':
+                    combos = strategy_engine.generate_combinations(
+                        recommendation['red_candidates'],
+                        recommendation['blue_candidates'],
+                        n_combinations=count,
+                    )
+                    combos = strategy_engine.smart_filter(combos)
+                else:
+                    windows_size = model_args[game]["model_args"]["windows_size"]
+                    features = df.iloc[:windows_size]
+                    with PredictService(game) as service:
+                        model_pred = service.get_final_prediction(features)
+                    if strategy == 'model_only':
+                        if isinstance(model_pred.get('blue'), list):
+                            blue = model_pred['blue']
+                        else:
+                            blue = [int(model_pred['blue'])]
+                        combos = [{"red": sorted(model_pred['red']), "blue": blue[0] if len(blue) == 1 else blue}]
+                    else:
+                        red_pool = list(set(model_pred['red'] + recommendation['red_candidates'][:max(12, model_args[game]["model_args"].get('sequence_len', 6))]))
+                        blue_candidates = recommendation['blue_candidates']
+                        if isinstance(model_pred.get('blue'), int):
+                            blue_pool = list(set([int(model_pred['blue'])] + blue_candidates[:max(3, model_args[game]["model_args"].get('blue_sequence_len', 1))]))
+                        else:
+                            blue_pool = list(set(model_pred.get('blue', []) + blue_candidates[:max(3, model_args[game]["model_args"].get('blue_sequence_len', 1))]))
+                        combos = strategy_engine.generate_combinations(red_pool, blue_pool, n_combinations=count)
+                        combos = strategy_engine.smart_filter(combos)
+
+                if not combos:
+                    combos = strategy_engine.generate_combinations(
+                        recommendation['red_candidates'],
+                        recommendation['blue_candidates'],
+                        n_combinations=count,
+                    )
+
+                self._lucky_last = combos
+                lines = []
+                for i, c in enumerate(combos[:count], 1):
+                    lines.append(f"组合{i}: 红球 {c['red']} + 蓝球 {c['blue']}")
+                self.after(0, lambda: self._write_box(self._lucky_log, "\n".join(lines) + "\n"))
+            except Exception as e:
+                self.after(0, lambda: self._write_box(self._lucky_log, f"\n生成失败: {e}\n"))
+            finally:
+                self._lucky_running = False
+                self.after(0, lambda: self._lucky_btn.configure(state="normal", text="生成推荐"))
+
+        threading.Thread(target=job, daemon=True).start()
+
+    def _fill_first_lucky(self) -> None:
+        if not getattr(self, "_lucky_last", None):
+            messagebox.showinfo("提示", "请先生成推荐组合")
+            return
+        first = self._lucky_last[0]
+        self.red_selected = sorted([int(x) for x in first.get('red', [])])
+        b = first.get('blue')
+        if isinstance(b, list):
+            self.blue_selected = sorted([int(x) for x in b])
+        elif b is None:
+            self.blue_selected = []
+        else:
+            self.blue_selected = [int(b)]
+        self._red_grid.refresh()
+        self._blue_grid.refresh()
+        self._update_summary()
+
+    def _simulate_draw(self) -> None:
+        game = self._get_game_key()
+        rule = GAME_RULES.get(game)
+        if rule is None:
+            return
+        draw_red = sorted(random.sample(range(1, rule.red_max + 1), rule.red_pick))
+        draw_blue = sorted(random.sample(range(1, rule.blue_max + 1), rule.blue_pick))
+        hit_red = len(set(draw_red) & set(self.red_selected))
+        hit_blue = len(set(draw_blue) & set(self.blue_selected))
+        text = f"摇奖结果: 红球 {draw_red} + 蓝球 {draw_blue}\n"
+        text += f"你的选择: 红球 {sorted(self.red_selected)} + 蓝球 {sorted(self.blue_selected)}\n"
+        text += f"命中情况: 红球 {hit_red} 个, 蓝球 {hit_blue} 个\n\n"
+        self._write_box(self._sim_log, text, clear=True)
+
+    def _switch_mode(self) -> None:
+        mode = self._bet_mode.get()
+        for name, frame in self._mode_frames.items():
+            frame.grid_remove()
+            frame.pack_forget()
+            frame.place_forget()
+        self._mode_frames[mode].grid(row=0, column=0, sticky="nsew")
+
+    def _change_game(self, initial: bool = False) -> None:
+        game_key = self._game_var.get()
+        if game_key not in GAME_RULES:
+            game_key = "ssq"
+            self._game_var.set(game_key)
+        self._cache.load(game_key)
+        rule = GAME_RULES[game_key]
+        self._issue.configure(text=f"第{self._cache.latest_issue}期")
+
+        self.red_selected = []
+        self.blue_selected = []
+        self._red_grid.set_rule(rule.red_max, rule.red_pick)
+        self._blue_grid.set_rule(rule.blue_max, rule.blue_pick)
+        self._update_summary()
+        if not initial:
+            self._switch_mode()
+
+    def _update_summary(self) -> None:
+        game_key = self._game_var.get()
+        rule = GAME_RULES.get(game_key)
+        if rule is None:
+            self._summary.configure(text="")
+            return
+        red_n = len(self.red_selected)
+        blue_n = len(self.blue_selected)
+        bets = comb(red_n, rule.red_pick) * comb(blue_n, rule.blue_pick)
+        cost = bets * rule.cost_per_bet
+        self._summary.configure(text=f"您选择了{red_n}个红球，{blue_n}个蓝球，共{bets}注，共{cost}元")
+
+        self._update_prob(rule)
+        self._on_summary_change()
+
+    def _update_prob(self, rule: GameRule) -> None:
+        if rule.key != "ssq":
+            self._prob_text.configure(text="当前仅对双色球提供奖级概率估算（其他玩法会逐步补齐）。")
+            return
+        if len(self.red_selected) == 0 or len(self.blue_selected) == 0:
+            self._prob_text.configure(text="请选择号码后自动估算")
+            return
+        if self._cache.analyzer is None:
+            self._prob_text.configure(text="暂无历史数据，无法估算")
+            return
+
+        res = estimate_ssq_prize_prob(self.red_selected, self.blue_selected, self._cache.analyzer, rule)
+        lines = []
+        for k, v in res.items():
+            lines.append(f"{k}: {v * 100:.4f}%")
+        lines.append("注：基于历史频率的独立近似估算，仅供娱乐。")
+        self._prob_text.configure(text="\n".join(lines))
+
+    def _done(self) -> None:
+        game_key = self._game_var.get()
+        rule = GAME_RULES.get(game_key)
+        if rule is None:
+            return
+        if len(self.red_selected) < rule.red_pick or len(self.blue_selected) < rule.blue_pick:
+            messagebox.showwarning("提示", f"至少选择{rule.red_pick}个红球和{rule.blue_pick}个蓝球")
+            return
+        red = " ".join([f"{x:02d}" for x in sorted(self.red_selected)])
+        blue = " ".join([f"{x:02d}" for x in sorted(self.blue_selected)])
+        messagebox.showinfo("已选择", f"红球: {red}\n蓝球: {blue}")
+
+
+class App(ctk.CTk):
+    def __init__(self):
+        super().__init__()
+        self.title("AI 彩票预测系统 v3.0")
+        self.geometry("1060x760")
+        self.minsize(980, 700)
+        self.configure(fg_color=COLORS["bg"])
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
+
+        self._cache = DataCache()
+
+        header = ctk.CTkFrame(self, fg_color=COLORS["card"], corner_radius=14, border_width=1, border_color=COLORS["border"])
+        header.grid(row=0, column=0, padx=16, pady=(16, 10), sticky="ew")
+        header.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(header, text="选号系统", font=ctk.CTkFont(size=18, weight="bold"), text_color=COLORS["text"]).grid(
+            row=0, column=0, padx=14, pady=14, sticky="w"
+        )
+        ctk.CTkLabel(header, text="数据来源：中彩网/福彩官方接口（仅供学习娱乐）", font=ctk.CTkFont(size=12), text_color=COLORS["subtext"]).grid(
+            row=0, column=1, padx=14, pady=14, sticky="e"
+        )
+
+        self._tabs = ctk.CTkTabview(self, fg_color=COLORS["bg"], segmented_button_fg_color=COLORS["chip"], segmented_button_selected_color=COLORS["primary"], segmented_button_selected_hover_color=COLORS["primary_hover"], segmented_button_unselected_color=COLORS["chip"], segmented_button_unselected_hover_color=COLORS["border"], text_color=COLORS["text"])
+        self._tabs.grid(row=1, column=0, padx=16, pady=(0, 16), sticky="nsew")
+
+        tab_picker = self._tabs.add("选号")
+        tab_trend = self._tabs.add("走势图")
+        tab_terms = self._tabs.add("术语")
+
+        self._current_game_for_trend = "ssq"
+
+        self._picker = PickerPanel(tab_picker, self._cache, on_summary_change=lambda: None, get_game_key=lambda: self._picker._game_var.get())
+        self._picker.pack(fill="both", expand=True)
+
+        self._trend = TrendPanel(tab_trend, self._cache, get_game_key=lambda: self._picker._game_var.get())
+        self._trend.pack(fill="both", expand=True)
+
+        terms_path = os.path.join(os.path.dirname(__file__), "data", "lottery_terms.json")
+        self._terms = TermsPanel(tab_terms, terms_path=terms_path)
+        self._terms.pack(fill="both", expand=True)
+
 
 def main():
-    app = LotteryPredictorApp()
+    app = App()
     try:
         if os.path.exists("icon.ico"):
             app.iconbitmap("icon.ico")
-    except:
+    except Exception:
         pass
-        
-    def on_closing():
-        if app.is_running:
-            if messagebox.askokcancel("退出", "预测任务正在执行，确定要强制退出吗？"):
-                app.destroy()
-                os._exit(0)
-        else:
-            app.destroy()
-            
-    app.protocol("WM_DELETE_WINDOW", on_closing)
     app.mainloop()
+
 
 if __name__ == "__main__":
     main()
