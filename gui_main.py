@@ -1259,6 +1259,7 @@ class PickerPanel(ctk.CTkFrame):
         self._lucky_running = True
         self._lucky_btn.configure(state="disabled", text="生成中...")
         self._write_box(self._lucky_log, "", clear=True)
+        self._write_box(self._lucky_log, "开始生成AI选号...\n")
 
         game = self.get_game_key()
         if game == "fc3d":
@@ -1269,22 +1270,34 @@ class PickerPanel(ctk.CTkFrame):
 
         def job():
             try:
+                def ui(msg: str) -> None:
+                    self.after(0, lambda m=msg: self._write_box(self._lucky_log, m))
+
                 strategy = self._lucky_strategy.get().strip()
                 count = int(self._lucky_count.get())
+
+                ui(f"策略: {strategy}，目标组数: {count}\n")
+                ui("加载历史数据...\n")
 
                 self._cache.load(game)
                 df = self._cache.df
                 if df is None or not len(df):
-                    self.after(0, lambda: self._write_box(self._lucky_log, "暂无历史数据\n"))
+                    ui("暂无历史数据\n")
                     return
                 from core.strategies import LotteryStrategy
                 from services.predict_service import PredictService
 
+                ui(f"历史数据: {len(df)} 期，最新期号: {self._cache.latest_issue}\n")
+
                 strategy_engine = LotteryStrategy(df)
+                ui("计算号码推荐池...\n")
                 recommendation = strategy_engine.recommend_balls(strategy='hybrid')
                 combos: List[Dict] = []
 
+                ui(f"候选池: 红球{len(recommendation.get('red_candidates', []))}个，蓝球{len(recommendation.get('blue_candidates', []))}个\n")
+
                 if strategy == 'strategy_only':
+                    ui("使用统计算法生成组合...\n")
                     combos = strategy_engine.generate_combinations(
                         recommendation['red_candidates'],
                         recommendation['blue_candidates'],
@@ -1292,10 +1305,12 @@ class PickerPanel(ctk.CTkFrame):
                     )
                     combos = strategy_engine.smart_filter(combos)
                 else:
+                    ui("加载模型并预测...（首次可能较慢）\n")
                     windows_size = model_args[game]["model_args"]["windows_size"]
                     features = df.iloc[:windows_size]
                     with PredictService(game) as service:
                         model_pred = service.get_final_prediction(features)
+                    ui(f"模型预测: 红球 {sorted(model_pred.get('red', []))} + 蓝球 {model_pred.get('blue')}\n")
                     if strategy == 'model_only':
                         if isinstance(model_pred.get('blue'), list):
                             blue = model_pred['blue']
@@ -1303,16 +1318,19 @@ class PickerPanel(ctk.CTkFrame):
                             blue = [int(model_pred['blue'])]
                         combos = [{"red": sorted(model_pred['red']), "blue": blue[0] if len(blue) == 1 else blue}]
                     else:
-                        red_pool = list(set(model_pred['red'] + recommendation['red_candidates'][:max(12, model_args[game]["model_args"].get('sequence_len', 6))]))
+                        ui("混合策略：融合模型预测与统计候选池...\n")
+                        red_pool = list(set(model_pred['red'] + recommendation['red_candidates'][:12]))
                         blue_candidates = recommendation['blue_candidates']
                         if isinstance(model_pred.get('blue'), int):
                             blue_pool = list(set([int(model_pred['blue'])] + blue_candidates[:max(3, model_args[game]["model_args"].get('blue_sequence_len', 1))]))
                         else:
                             blue_pool = list(set(model_pred.get('blue', []) + blue_candidates[:max(3, model_args[game]["model_args"].get('blue_sequence_len', 1))]))
+                        ui(f"融合后候选池: 红球{len(red_pool)}个，蓝球{len(blue_pool)}个\n")
                         combos = strategy_engine.generate_combinations(red_pool, blue_pool, n_combinations=count)
                         combos = strategy_engine.smart_filter(combos)
 
                 if not combos:
+                    ui("过滤条件过严，回退到未过滤组合...\n")
                     combos = strategy_engine.generate_combinations(
                         recommendation['red_candidates'],
                         recommendation['blue_candidates'],
@@ -1320,12 +1338,13 @@ class PickerPanel(ctk.CTkFrame):
                     )
 
                 self._lucky_last = combos
-                lines = []
-                for i, c in enumerate(combos[:count], 1):
-                    lines.append(f"组合{i}: 红球 {c['red']} + 蓝球 {c['blue']}")
-                self.after(0, lambda: self._write_box(self._lucky_log, "\n".join(lines) + "\n"))
+                lines = ["\n结果：\n"]
+                for i, c in enumerate(combos[: max(1, min(count, len(combos)))], 1):
+                    lines.append(f"组合{i}: 红球 {c.get('red')} + 蓝球 {c.get('blue')}")
+                ui("\n".join(lines) + "\n")
             except Exception as e:
-                self.after(0, lambda: self._write_box(self._lucky_log, f"\n生成失败: {e}\n"))
+                msg = f"\n生成失败: {e}\n"
+                self.after(0, lambda m=msg: self._write_box(self._lucky_log, m))
             finally:
                 self._lucky_running = False
                 self.after(0, lambda: self._lucky_btn.configure(state="normal", text="生成推荐"))
