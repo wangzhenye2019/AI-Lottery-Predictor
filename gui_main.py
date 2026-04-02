@@ -15,6 +15,8 @@ from typing import Dict, List, Optional, Tuple
 
 import customtkinter as ctk
 import pandas as pd
+import matplotlib
+from matplotlib import font_manager, rcParams
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
@@ -24,6 +26,29 @@ from get_data import run as run_get_data
 
 ctk.set_appearance_mode("System")
 ctk.set_default_color_theme("blue")
+
+
+def _setup_matplotlib_chinese() -> None:
+    candidates = [
+        "Microsoft YaHei",
+        "Microsoft YaHei UI",
+        "SimHei",
+        "Noto Sans CJK SC",
+        "Source Han Sans SC",
+        "PingFang SC",
+    ]
+    for name in candidates:
+        try:
+            font_manager.findfont(font_manager.FontProperties(family=name), fallback_to_default=False)
+            rcParams["font.sans-serif"] = [name]
+            rcParams["axes.unicode_minus"] = False
+            return
+        except Exception:
+            continue
+    rcParams["axes.unicode_minus"] = False
+
+
+_setup_matplotlib_chinese()
 
 COLORS = {
     "bg": ("#F5F7FB", "#0B1220"),
