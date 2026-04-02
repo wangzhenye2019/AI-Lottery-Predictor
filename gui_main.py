@@ -1575,17 +1575,80 @@ class PickerPanel(ctk.CTkFrame):
         rule = GAME_RULES.get(game_key)
         if rule is None:
             return
+
+        red_n = tuple(sorted([int(x) for x in red]))
+        blue_n = tuple(sorted([int(x) for x in blue]))
+        for t in self.my_tickets:
+            if t.get("game_key") == game_key and tuple(t.get("red", [])) == red_n and tuple(t.get("blue", [])) == blue_n:
+                return
         ticket = {
             "game_key": game_key,
             "game_name": rule.name,
             "mode": mode,
-            "red": sorted([int(x) for x in red]),
-            "blue": sorted([int(x) for x in blue]),
+            "red": list(red_n),
+            "blue": list(blue_n),
             "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
         self.my_tickets.insert(0, ticket)
         self._sim_selected_ticket_idx = 0
         self._render_my_ticket_list()
+
+    def _recommend_bet_plans(self, game_key: str, combos: List[Dict], count: int) -> str:
+        rule = GAME_RULES.get(game_key)
+        if rule is None or not combos:
+            return ""
+
+        use = combos[: max(1, min(count, len(combos)))]
+        single_bets = len(use)
+        single_cost = single_bets * rule.cost_per_bet
+        lines: List[str] = []
+        lines.append("\n推荐下注方式：")
+        lines.append(f"1) 单买：直接购买以上 {single_bets} 注（约 {single_cost} 元）")
+
+        red_freq: Dict[int, int] = {}
+        blue_freq: Dict[int, int] = {}
+        for c in use:
+            for r in c.get("red", []) or []:
+                rr = int(r)
+                red_freq[rr] = red_freq.get(rr, 0) + 1
+            b = c.get("blue")
+            if isinstance(b, list):
+                for x in b:
+                    xx = int(x)
+                    blue_freq[xx] = blue_freq.get(xx, 0) + 1
+            elif b is not None:
+                bb = int(b)
+                blue_freq[bb] = blue_freq.get(bb, 0) + 1
+
+        red_sorted = [n for n, _ in sorted(red_freq.items(), key=lambda kv: (-kv[1], kv[0]))]
+        blue_sorted = [n for n, _ in sorted(blue_freq.items(), key=lambda kv: (-kv[1], kv[0]))]
+
+        dan_target = max(1, min(rule.red_pick - 1, 3 if rule.red_pick >= 6 else 2))
+        dan = red_sorted[:dan_target]
+        tuo_target = max(rule.red_pick - len(dan), min(12, len(red_sorted)))
+        tuo = [n for n in red_sorted if n not in dan][:tuo_target]
+        need_tuo = rule.red_pick - len(dan)
+        if len(tuo) < need_tuo:
+            return "\n".join(lines)
+
+        blue_pool_size = max(rule.blue_pick, 3 if rule.blue_pick == 1 else rule.blue_pick + 1)
+        blue_pool = blue_sorted[:blue_pool_size] if blue_sorted else list(range(1, rule.blue_max + 1))[:blue_pool_size]
+        if len(blue_pool) < rule.blue_pick:
+            blue_pool = list(range(1, rule.blue_max + 1))[: rule.blue_pick]
+
+        bets = comb(len(tuo), need_tuo) * comb(len(blue_pool), rule.blue_pick)
+        cost = bets * rule.cost_per_bet
+        lines.append(
+            "2) 胆拖：胆码 "
+            + " ".join([f"{x:02d}" for x in dan])
+            + "；拖码 "
+            + " ".join([f"{x:02d}" for x in tuo])
+            + "；蓝球 "
+            + " ".join([f"{x:02d}" for x in blue_pool])
+            + f" → 共 {bets} 注（约 {cost} 元）"
+        )
+        lines.append("注：推荐基于本次AI组合的出现频次统计，仅供娱乐。")
+        return "\n".join(lines)
 
     def _get_ticket_for_sim(self) -> Optional[Dict]:
         if 0 <= self._sim_selected_ticket_idx < len(self.my_tickets):
@@ -1736,10 +1799,24 @@ class PickerPanel(ctk.CTkFrame):
                     )
 
                 self._lucky_last = combos
+                use_n = max(1, min(count, len(combos)))
+                for i in range(use_n, 0, -1):
+                    c = combos[i - 1]
+                    r = [int(x) for x in (c.get('red') or [])]
+                    b = c.get('blue')
+                    if isinstance(b, list):
+                        bb = [int(x) for x in b]
+                    elif b is None:
+                        bb = []
+                    else:
+                        bb = [int(b)]
+                    self.after(0, lambda rr=r, bbb=bb, idx=i: self._add_my_ticket(game_key=game, mode=f"AI选号#{idx}", red=rr, blue=bbb))
+
                 lines = ["\n结果：\n"]
-                for i, c in enumerate(combos[: max(1, min(count, len(combos)))], 1):
+                for i, c in enumerate(combos[:use_n], 1):
                     lines.append(f"组合{i}: 红球 {c.get('red')} + 蓝球 {c.get('blue')}")
                 ui("\n".join(lines) + "\n")
+                ui(self._recommend_bet_plans(game, combos, count) + "\n")
             except Exception as e:
                 msg = f"\n生成失败: {e}\n"
                 self.after(0, lambda m=msg: self._write_box(self._lucky_log, m))
@@ -1770,7 +1847,7 @@ class PickerPanel(ctk.CTkFrame):
         self._blue_grid.refresh()
         self._update_summary()
         game_key = self.get_game_key()
-        self._add_my_ticket(game_key=game_key, mode="AI选号", red=self.red_selected, blue=self.blue_selected)
+        self._add_my_ticket(game_key=game_key, mode="AI选号(填充)", red=self.red_selected, blue=self.blue_selected)
 
     def _simulate_draw(self) -> None:
         ticket = self._get_ticket_for_sim()
