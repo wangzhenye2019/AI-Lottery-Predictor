@@ -181,11 +181,18 @@ def run(name, strategy_type, n_combinations):
                         target_red_count = 5
                         
                     red_pool = list(set(hybrid_pred['red'] + [r-1 if name == "fc3d" else r for r in recommendation['red_candidates'][:target_red_count]]))
-                    blue_pool = list(set([hybrid_pred['blue']] + recommendation['blue_candidates'][:3])) if isinstance(hybrid_pred['blue'], int) else list(set(hybrid_pred['blue'] + recommendation['blue_candidates'][:3]))
+                    if name == "fc3d":
+                        blue_pool = [1]  # fake blue pool for fc3d
+                    else:
+                        blue_pool = list(set([hybrid_pred['blue']] + recommendation['blue_candidates'][:3])) if isinstance(hybrid_pred['blue'], int) else list(set(hybrid_pred['blue'] + recommendation['blue_candidates'][:3]))
                     
                     combos = strategy.generate_combinations(red_pool, blue_pool, n_combinations)
                     filtered = strategy.smart_filter(combos)
                     
+                    if not filtered:
+                        logger.info("由于过滤条件过严，返回未过滤的组合：")
+                        filtered = combos
+                        
                     logger.info("=" * 50)
                     logger.info("【最终推荐组合】")
                     for i, combo in enumerate(filtered[:n_combinations], 1):
