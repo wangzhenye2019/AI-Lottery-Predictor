@@ -23,6 +23,7 @@ from matplotlib.figure import Figure
 from config import data_file_name, model_args, name_path
 from core.strategies import StrategyAnalyzer
 from get_data import run as run_get_data
+from utils.zhcw_client import fetch_draw_list, format_open_time, normalize_issue
 
 ctk.set_appearance_mode("System")
 ctk.set_default_color_theme("blue")
@@ -342,14 +343,24 @@ class DataCache:
             self._hot_blue = set(self._analyzer.get_hot_numbers("blue", recent_n=80, top_ratio=0.33))
 
             if (not self._latest_date) or ("日期" not in df.columns):
-                try:
-                    from get_data import spider_cwl
-                    api_df = spider_cwl(game_key, 1)
-                    if api_df is not None and len(api_df):
-                        self._latest_issue = _normalize_issue(str(api_df.iloc[0].get("期数", self._latest_issue)))
-                        self._latest_date = str(api_df.iloc[0].get("日期", self._latest_date))
-                except Exception:
-                    pass
+                if game_key in ["ssq", "qlc", "fc3d"]:
+                    try:
+                        from get_data import spider_cwl
+                        api_df = spider_cwl(game_key, 1)
+                        if api_df is not None and len(api_df):
+                            self._latest_issue = _normalize_issue(str(api_df.iloc[0].get("期数", self._latest_issue)))
+                            self._latest_date = str(api_df.iloc[0].get("日期", self._latest_date))
+                    except Exception:
+                        pass
+                elif game_key == "dlt":
+                    try:
+                        items = fetch_draw_list("dlt", page_num=1, page_size=1)
+                        if items:
+                            it = items[0]
+                            self._latest_issue = _normalize_issue(normalize_issue(it.issue))
+                            self._latest_date = format_open_time(it.open_time, it.week)
+                    except Exception:
+                        pass
 
     @staticmethod
     def _fast_omission(df: pd.DataFrame, ball_type: str) -> Dict[int, int]:
@@ -1065,6 +1076,9 @@ class PickerPanel(ctk.CTkFrame):
         self.dt_red_tuo: List[int] = []
         self.dt_blue: List[int] = []
 
+        self.my_tickets: List[Dict] = []
+        self._sim_selected_ticket_idx: int = -1
+
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=0)
         self.grid_rowconfigure(1, weight=1)
@@ -1106,7 +1120,7 @@ class PickerPanel(ctk.CTkFrame):
         self._bet_mode = ctk.StringVar(value="普通投注")
         self._modes = ctk.CTkSegmentedButton(
             self._top,
-            values=["普通投注", "胆拖投注", "AI选号", "模拟摇奖", "奖金计算"],
+            values=["普通投注", "胆拖投注", "AI选号", "模拟摇奖", "开奖信息"],
             variable=self._bet_mode,
             selected_color=COLORS["danger"],
             selected_hover_color=COLORS["danger"],
@@ -1153,7 +1167,7 @@ class PickerPanel(ctk.CTkFrame):
             w.destroy()
         self._mode_frames.clear()
 
-        for mode in ["普通投注", "胆拖投注", "AI选号", "模拟摇奖", "奖金计算"]:
+        for mode in ["普通投注", "胆拖投注", "AI选号", "模拟摇奖", "开奖信息"]:
             f = ctk.CTkFrame(self._body, fg_color="transparent")
             f.grid(row=0, column=0, sticky="nsew")
             self._mode_frames[mode] = f
@@ -1162,7 +1176,7 @@ class PickerPanel(ctk.CTkFrame):
         self._build_dantuo(self._mode_frames["胆拖投注"])
         self._build_lucky(self._mode_frames["AI选号"])
         self._build_sim(self._mode_frames["模拟摇奖"])
-        self._build_placeholder(self._mode_frames["奖金计算"], "奖金计算：下一步支持按命中情况计算奖级")
+        self._build_draw_info(self._mode_frames["开奖信息"])
 
         self._switch_mode()
 
@@ -1170,6 +1184,156 @@ class PickerPanel(ctk.CTkFrame):
         card = ctk.CTkFrame(frame, fg_color=COLORS["card"], corner_radius=12, border_width=1, border_color=COLORS["border"])
         card.pack(fill="both", expand=True)
         ctk.CTkLabel(card, text=text, font=ctk.CTkFont(size=14), text_color=COLORS["subtext"]).pack(padx=14, pady=14)
+
+    def _build_draw_info(self, frame: ctk.CTkFrame) -> None:
+        frame.grid_columnconfigure(1, weight=1)
+        frame.grid_rowconfigure(0, weight=1)
+
+        left = ctk.CTkFrame(frame, fg_color=COLORS["card"], corner_radius=12, border_width=1, border_color=COLORS["border"])
+        left.grid(row=0, column=0, sticky="ns", padx=(0, 12))
+        right = ctk.CTkFrame(frame, fg_color=COLORS["card"], corner_radius=12, border_width=1, border_color=COLORS["border"])
+        right.grid(row=0, column=1, sticky="nsew")
+        right.grid_columnconfigure(0, weight=1)
+        right.grid_rowconfigure(1, weight=1)
+
+        head = ctk.CTkFrame(left, fg_color="transparent")
+        head.grid(row=0, column=0, padx=14, pady=(14, 10), sticky="ew")
+        ctk.CTkLabel(head, text="开奖期号", font=ctk.CTkFont(size=16, weight="bold"), text_color=COLORS["text"]).grid(
+            row=0, column=0, sticky="w"
+        )
+        self._draw_refresh_btn = ctk.CTkButton(
+            head,
+            text="刷新",
+            width=70,
+            fg_color=COLORS["primary"],
+            hover_color=COLORS["primary_hover"],
+            text_color="#FFFFFF",
+            command=self._refresh_draw_info,
+        )
+        self._draw_refresh_btn.grid(row=0, column=1, padx=(10, 0), sticky="e")
+
+        self._draw_issue_list = ctk.CTkScrollableFrame(left, fg_color="transparent", width=210)
+        self._draw_issue_list.grid(row=1, column=0, padx=10, pady=(0, 10), sticky="nsew")
+        left.grid_rowconfigure(1, weight=1)
+
+        rhead = ctk.CTkFrame(right, fg_color="transparent")
+        rhead.grid(row=0, column=0, padx=14, pady=(14, 10), sticky="ew")
+        rhead.grid_columnconfigure(0, weight=1)
+        self._draw_title = ctk.CTkLabel(rhead, text="开奖信息", font=ctk.CTkFont(size=16, weight="bold"), text_color=COLORS["text"])
+        self._draw_title.grid(row=0, column=0, sticky="w")
+        self._draw_hint = ctk.CTkLabel(rhead, text="数据来源：中彩网", font=ctk.CTkFont(size=12), text_color=COLORS["subtext"])
+        self._draw_hint.grid(row=0, column=1, sticky="e")
+
+        self._draw_detail = ctk.CTkTextbox(
+            right,
+            state="disabled",
+            fg_color=COLORS["log_bg"],
+            text_color=COLORS["log_fg"],
+            border_width=1,
+            border_color=COLORS["border"],
+            corner_radius=8,
+            font=ctk.CTkFont(family="Consolas", size=12),
+            wrap="word",
+        )
+        self._draw_detail.grid(row=1, column=0, padx=14, pady=(0, 14), sticky="nsew")
+
+        self._draw_items: List = []
+        self._draw_selected_issue: str = ""
+        self._refresh_draw_info()
+
+    def _refresh_draw_info(self) -> None:
+        if getattr(self, "_draw_loading", False):
+            return
+        self._draw_loading = True
+        self._draw_refresh_btn.configure(state="disabled", text="刷新中...")
+
+        game = self.get_game_key()
+
+        def job():
+            try:
+                items = fetch_draw_list(game, page_num=1, page_size=50)
+                try:
+                    if self.winfo_exists():
+                        self.after(0, lambda: self._render_draw_issue_list(items))
+                except Exception:
+                    pass
+            finally:
+                self._draw_loading = False
+                try:
+                    if self.winfo_exists():
+                        self.after(0, lambda: self._draw_refresh_btn.configure(state="normal", text="刷新"))
+                except Exception:
+                    pass
+
+        threading.Thread(target=job, daemon=True).start()
+
+    def _render_draw_issue_list(self, items) -> None:
+        self._draw_items = items or []
+        for w in self._draw_issue_list.winfo_children():
+            w.destroy()
+        if not self._draw_items:
+            ctk.CTkLabel(self._draw_issue_list, text="暂无数据", text_color=COLORS["subtext"]).pack(padx=10, pady=10)
+            return
+
+        for i, item in enumerate(self._draw_items):
+            issue = normalize_issue(item.issue)
+            label = issue
+            btn = ctk.CTkButton(
+                self._draw_issue_list,
+                text=label,
+                fg_color=COLORS["chip"],
+                hover_color=COLORS["border"],
+                text_color=COLORS["text"],
+                anchor="w",
+                width=180,
+                command=lambda x=issue: self._select_draw_issue(x),
+            )
+            btn.pack(fill="x", padx=6, pady=4)
+
+        self._select_draw_issue(normalize_issue(self._draw_items[0].issue))
+
+    def _select_draw_issue(self, issue: str) -> None:
+        self._draw_selected_issue = issue
+        item = None
+        for it in self._draw_items:
+            if normalize_issue(it.issue) == issue:
+                item = it
+                break
+        if item is None:
+            return
+
+        title = f"{self._game_var.get()} 第{issue}期"
+        open_date = format_open_time(item.open_time, item.week)
+        reds = (item.front or "").strip()
+        blues = (item.back or "").strip()
+
+        lines = []
+        lines.append(title)
+        if open_date:
+            lines.append(f"开奖日期: {open_date}")
+        if reds:
+            lines.append(f"红球: {reds}")
+        if blues:
+            lines.append(f"蓝球: {blues}")
+        if item.sale_money:
+            lines.append(f"销量: {item.sale_money}")
+        if item.prize_pool_money:
+            lines.append(f"奖池: {item.prize_pool_money}")
+
+        if item.winner_details:
+            lines.append("\n奖级信息:")
+            for wd in item.winner_details:
+                base = wd.get("baseBetWinner") or {}
+                remark = base.get("remark") or wd.get("awardEtc")
+                award_num = base.get("awardNum")
+                award_money = base.get("awardMoney")
+                if remark and award_num and award_money:
+                    lines.append(f"- {remark}: {award_num} 注, {award_money} 元")
+
+        self._draw_detail.configure(state="normal")
+        self._draw_detail.delete("1.0", tk.END)
+        self._draw_detail.insert(tk.END, "\n".join(lines))
+        self._draw_detail.configure(state="disabled")
 
     def _build_normal(self, frame: ctk.CTkFrame) -> None:
         frame.grid_columnconfigure(0, weight=1)
@@ -1328,23 +1492,38 @@ class PickerPanel(ctk.CTkFrame):
         self._lucky_last: List[Dict] = []
 
     def _build_sim(self, frame: ctk.CTkFrame) -> None:
-        frame.grid_columnconfigure(0, weight=1)
-        card = ctk.CTkFrame(frame, fg_color=COLORS["card"], corner_radius=12, border_width=1, border_color=COLORS["border"])
-        card.grid(row=0, column=0, sticky="nsew")
-        card.grid_columnconfigure(0, weight=1)
+        frame.grid_columnconfigure(1, weight=1)
+        frame.grid_rowconfigure(0, weight=1)
 
-        ctk.CTkLabel(card, text="模拟摇奖", font=ctk.CTkFont(size=16, weight="bold"), text_color=COLORS["text"]).grid(
+        left = ctk.CTkFrame(frame, fg_color=COLORS["card"], corner_radius=12, border_width=1, border_color=COLORS["border"])
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
+        left.grid_rowconfigure(1, weight=1)
+        left.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(left, text="我的选号", font=ctk.CTkFont(size=16, weight="bold"), text_color=COLORS["text"]).grid(
+            row=0, column=0, padx=14, pady=(14, 8), sticky="w"
+        )
+        self._my_ticket_list = ctk.CTkScrollableFrame(left, fg_color="transparent", width=260)
+        self._my_ticket_list.grid(row=1, column=0, padx=10, pady=(0, 10), sticky="nsew")
+
+        right = ctk.CTkFrame(frame, fg_color=COLORS["card"], corner_radius=12, border_width=1, border_color=COLORS["border"])
+        right.grid(row=0, column=1, sticky="nsew")
+        right.grid_columnconfigure(0, weight=1)
+        right.grid_rowconfigure(3, weight=1)
+
+        ctk.CTkLabel(right, text="模拟摇奖", font=ctk.CTkFont(size=16, weight="bold"), text_color=COLORS["text"]).grid(
             row=0, column=0, padx=14, pady=(14, 6), sticky="w"
         )
         self._sim_text = ctk.CTkLabel(
-            card,
-            text="点击按钮将随机摇出一注，并与当前选号对比（仅供娱乐）",
+            right,
+            text="随机摇出一注，并与‘我的选号’中选中的一注对比（仅供娱乐）",
             font=ctk.CTkFont(size=13),
             text_color=COLORS["subtext"],
         )
         self._sim_text.grid(row=1, column=0, padx=14, pady=(0, 10), sticky="w")
+
         self._sim_btn = ctk.CTkButton(
-            card,
+            right,
             text="开始摇奖",
             fg_color=COLORS["danger"],
             hover_color=COLORS["danger"],
@@ -1354,7 +1533,7 @@ class PickerPanel(ctk.CTkFrame):
         self._sim_btn.grid(row=2, column=0, padx=14, pady=(0, 12), sticky="w")
 
         self._sim_log = ctk.CTkTextbox(
-            card,
+            right,
             state="disabled",
             height=260,
             fg_color=COLORS["log_bg"],
@@ -1366,6 +1545,86 @@ class PickerPanel(ctk.CTkFrame):
             wrap="word",
         )
         self._sim_log.grid(row=3, column=0, padx=14, pady=(0, 14), sticky="nsew")
+
+        self._render_my_ticket_list()
+
+    def _render_my_ticket_list(self) -> None:
+        if not hasattr(self, "_my_ticket_list"):
+            return
+        for w in self._my_ticket_list.winfo_children():
+            w.destroy()
+        if not self.my_tickets:
+            ctk.CTkLabel(self._my_ticket_list, text="暂无选号\n在普通投注/胆拖投注点‘选好了’或AI选号填充即可加入", text_color=COLORS["subtext"], justify="left").pack(
+                padx=10, pady=10, anchor="w"
+            )
+            return
+
+        for idx, t in enumerate(self.my_tickets):
+            active = idx == self._sim_selected_ticket_idx
+            title = f"{t.get('game_name','')} · {t.get('mode','')}"
+            red = " ".join([f"{int(x):02d}" for x in t.get('red', [])])
+            blue_list = t.get('blue', [])
+            if isinstance(blue_list, list):
+                blue = " ".join([f"{int(x):02d}" for x in blue_list])
+            else:
+                blue = str(blue_list)
+
+            btn = ctk.CTkButton(
+                self._my_ticket_list,
+                text=f"{title}\n红: {red}\n蓝: {blue}",
+                fg_color=COLORS["primary"] if active else COLORS["chip"],
+                hover_color=COLORS["primary_hover"] if active else COLORS["border"],
+                text_color="#FFFFFF" if active else COLORS["text"],
+                corner_radius=10,
+                anchor="w",
+                height=64,
+                command=lambda i=idx: self._select_my_ticket(i),
+            )
+            btn.pack(fill="x", padx=6, pady=6)
+
+    def _select_my_ticket(self, idx: int) -> None:
+        self._sim_selected_ticket_idx = idx
+        self._render_my_ticket_list()
+
+    def _add_my_ticket(self, *, game_key: str, mode: str, red: List[int], blue: List[int]) -> None:
+        rule = GAME_RULES.get(game_key)
+        if rule is None:
+            return
+        ticket = {
+            "game_key": game_key,
+            "game_name": rule.name,
+            "mode": mode,
+            "red": sorted([int(x) for x in red]),
+            "blue": sorted([int(x) for x in blue]),
+            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        self.my_tickets.insert(0, ticket)
+        self._sim_selected_ticket_idx = 0
+        self._render_my_ticket_list()
+
+    def _get_ticket_for_sim(self) -> Optional[Dict]:
+        if 0 <= self._sim_selected_ticket_idx < len(self.my_tickets):
+            return self.my_tickets[self._sim_selected_ticket_idx]
+        game_key = self.get_game_key()
+        rule = GAME_RULES.get(game_key)
+        if rule is None:
+            return None
+        if len(self.red_selected) >= rule.red_pick and len(self.blue_selected) >= rule.blue_pick:
+            return {
+                "game_key": game_key,
+                "game_name": rule.name,
+                "mode": "普通投注",
+                "red": sorted(self.red_selected),
+                "blue": sorted(self.blue_selected),
+            }
+        return None
+
+    def _exact_match_prob(self, rule: GameRule, hit_red: int, hit_blue: int) -> float:
+        total_red = comb(rule.red_max, rule.red_pick)
+        total_blue = comb(rule.blue_max, rule.blue_pick)
+        p_red = comb(rule.red_pick, hit_red) * comb(rule.red_max - rule.red_pick, rule.red_pick - hit_red) / max(1, total_red)
+        p_blue = comb(rule.blue_pick, hit_blue) * comb(rule.blue_max - rule.blue_pick, rule.blue_pick - hit_blue) / max(1, total_blue)
+        return float(p_red) * float(p_blue)
 
     def _write_box(self, box: ctk.CTkTextbox, text: str, clear: bool = False) -> None:
         box.configure(state="normal")
@@ -1505,19 +1764,54 @@ class PickerPanel(ctk.CTkFrame):
         self._red_grid.refresh()
         self._blue_grid.refresh()
         self._update_summary()
+        game_key = self.get_game_key()
+        self._add_my_ticket(game_key=game_key, mode="AI选号", red=self.red_selected, blue=self.blue_selected)
 
     def _simulate_draw(self) -> None:
-        game = self.get_game_key()
+        ticket = self._get_ticket_for_sim()
+        if ticket is None:
+            messagebox.showinfo("提示", "请先在‘我的选号’中选择一注，或在普通投注选好后点‘选好了’保存。")
+            return
+
+        game = ticket.get("game_key")
         rule = GAME_RULES.get(game)
         if rule is None:
             return
+
+        my_red = sorted([int(x) for x in ticket.get("red", [])])
+        my_blue = sorted([int(x) for x in ticket.get("blue", [])])
         draw_red = sorted(random.sample(range(1, rule.red_max + 1), rule.red_pick))
         draw_blue = sorted(random.sample(range(1, rule.blue_max + 1), rule.blue_pick))
-        hit_red = len(set(draw_red) & set(self.red_selected))
-        hit_blue = len(set(draw_blue) & set(self.blue_selected))
-        text = f"摇奖结果: 红球 {draw_red} + 蓝球 {draw_blue}\n"
-        text += f"你的选择: 红球 {sorted(self.red_selected)} + 蓝球 {sorted(self.blue_selected)}\n"
-        text += f"命中情况: 红球 {hit_red} 个, 蓝球 {hit_blue} 个\n\n"
+        hit_red = len(set(draw_red) & set(my_red))
+        hit_blue = len(set(draw_blue) & set(my_blue))
+
+        prob = self._exact_match_prob(rule, hit_red, hit_blue)
+        grade = ""
+        if game == "ssq":
+            if hit_red == 6 and hit_blue == 1:
+                grade = "一等奖"
+            elif hit_red == 6 and hit_blue == 0:
+                grade = "二等奖"
+            elif hit_red == 5 and hit_blue == 1:
+                grade = "三等奖"
+            elif (hit_red == 5 and hit_blue == 0) or (hit_red == 4 and hit_blue == 1):
+                grade = "四等奖"
+            elif (hit_red == 4 and hit_blue == 0) or (hit_red == 3 and hit_blue == 1):
+                grade = "五等奖"
+            elif hit_blue == 1 and hit_red <= 2:
+                grade = "六等奖"
+            else:
+                grade = "未中奖"
+
+        text = ""
+        text += f"使用号码: {ticket.get('game_name','')} · {ticket.get('mode','')}\n"
+        text += f"我的选号: 红球 {my_red} + 蓝球 {my_blue}\n"
+        text += f"摇奖结果: 红球 {draw_red} + 蓝球 {draw_blue}\n"
+        text += f"命中情况: 红球 {hit_red} 个, 蓝球 {hit_blue} 个\n"
+        if grade:
+            text += f"奖级判断: {grade}\n"
+        text += f"该命中组合理论概率(随机一注): {prob * 100:.6f}%\n\n"
+
         self._write_box(self._sim_log, text, clear=True)
 
     def _switch_mode(self) -> None:
@@ -1620,6 +1914,7 @@ class PickerPanel(ctk.CTkFrame):
             tuo = " ".join([f"{x:02d}" for x in sorted(self.dt_red_tuo)])
             blue = " ".join([f"{x:02d}" for x in sorted(self.dt_blue)])
             messagebox.showinfo("已选择（胆拖）", f"胆码: {dan}\n拖码: {tuo}\n蓝球: {blue}")
+            self._add_my_ticket(game_key=game_key, mode="胆拖投注", red=sorted(set(self.dt_red_dan + self.dt_red_tuo)), blue=self.dt_blue)
             return
 
         if len(self.red_selected) < rule.red_pick or len(self.blue_selected) < rule.blue_pick:
@@ -1628,6 +1923,7 @@ class PickerPanel(ctk.CTkFrame):
         red = " ".join([f"{x:02d}" for x in sorted(self.red_selected)])
         blue = " ".join([f"{x:02d}" for x in sorted(self.blue_selected)])
         messagebox.showinfo("已选择", f"红球: {red}\n蓝球: {blue}")
+        self._add_my_ticket(game_key=game_key, mode="普通投注", red=self.red_selected, blue=self.blue_selected)
 
 
 class App(ctk.CTk):
