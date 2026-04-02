@@ -149,13 +149,14 @@ class GameRule:
     red_pick: int
     blue_max: int
     blue_pick: int
+    close_time: str = "20:00:00"
     cost_per_bet: int = 2
 
 
 GAME_RULES: Dict[str, GameRule] = {
-    "ssq": GameRule(key="ssq", name="双色球", red_max=33, red_pick=6, blue_max=16, blue_pick=1),
-    "dlt": GameRule(key="dlt", name="大乐透", red_max=35, red_pick=5, blue_max=12, blue_pick=2),
-    "qlc": GameRule(key="qlc", name="七乐彩", red_max=30, red_pick=7, blue_max=30, blue_pick=1),
+    "ssq": GameRule(key="ssq", name="双色球", red_max=33, red_pick=6, blue_max=16, blue_pick=1, close_time="20:00:00"),
+    "dlt": GameRule(key="dlt", name="大乐透", red_max=35, red_pick=5, blue_max=12, blue_pick=2, close_time="20:00:00"),
+    "qlc": GameRule(key="qlc", name="七乐彩", red_max=30, red_pick=7, blue_max=30, blue_pick=1, close_time="20:00:00"),
 }
 
 
@@ -274,6 +275,15 @@ class DataCache:
             self._omission_blue = self._fast_omission(df, "blue")
             self._hot_red = set(self._analyzer.get_hot_numbers("red", recent_n=80, top_ratio=0.33))
             self._hot_blue = set(self._analyzer.get_hot_numbers("blue", recent_n=80, top_ratio=0.33))
+
+            if (not self._latest_date) or ("日期" not in df.columns):
+                try:
+                    from get_data import spider_cwl
+                    api_df = spider_cwl(game_key, 1)
+                    if api_df is not None and len(api_df):
+                        self._latest_date = str(api_df.iloc[0].get("日期", self._latest_date))
+                except Exception:
+                    pass
 
     @staticmethod
     def _fast_omission(df: pd.DataFrame, ball_type: str) -> Dict[int, int]:
@@ -1394,7 +1404,11 @@ class PickerPanel(ctk.CTkFrame):
         game_key = self.get_game_key()
         self._cache.load(game_key)
         rule = GAME_RULES[game_key]
-        self._issue.configure(text=f"第{self._cache.latest_issue}期")
+        date_str = (self._cache.latest_date or "").strip()
+        if date_str:
+            self._issue.configure(text=f"第{self._cache.latest_issue}期  {date_str}  {rule.close_time}截止")
+        else:
+            self._issue.configure(text=f"第{self._cache.latest_issue}期  {rule.close_time}截止")
 
         self.red_selected = []
         self.blue_selected = []

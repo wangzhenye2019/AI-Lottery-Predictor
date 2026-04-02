@@ -48,6 +48,7 @@ def spider_cwl(name, issue_count=3000):
         for item in results:
             row = dict()
             row[u"期数"] = item.get("code")
+            row[u"日期"] = item.get("date")
             red_str = item.get("red")
             blue_str = item.get("blue")
             
