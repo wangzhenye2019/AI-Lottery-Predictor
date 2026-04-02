@@ -170,10 +170,15 @@ class StrategyAnalyzer:
     def _get_max_number(self, ball_type: str) -> int:
         """获取指定球类型的最大号码"""
         if ball_type == 'red':
-            return 33
+            if len(self.red_balls) == 6: return 33  # ssq
+            if len(self.red_balls) == 5: return 35  # dlt
+            if len(self.red_balls) == 7: return 30  # qlc
+            return 35
         else:
-            # 蓝球：双色球 16，大乐透 12
-            return 16 if len(self.blue_balls) == 1 else 12
+            if len(self.red_balls) == 6: return 16  # ssq
+            if len(self.red_balls) == 5: return 12  # dlt
+            if len(self.red_balls) == 7: return 30  # qlc
+            return 16
 
 
 class StatisticsAnalyzer:
@@ -352,7 +357,7 @@ class BallRecommender:
         Returns:
             推荐号码列表
         """
-        max_num = 33 if ball_type == 'red' else 16
+        max_num = self.strategy._get_max_number(ball_type)
         
         scores = {}
         for num in range(1, max_num + 1):
@@ -508,9 +513,10 @@ class LotteryStrategy:
             red_probs = np.array(red_weights) / sum(red_weights)
             
             # 使用 np.random.choice 进行加权无放回抽样
+            red_count = len(self.strategy.red_balls)
             red_balls = sorted(np.random.choice(
                 red_candidates, 
-                size=min(6, len(red_candidates)), 
+                size=min(red_count, len(red_candidates)), 
                 replace=False, 
                 p=red_probs
             ).tolist())

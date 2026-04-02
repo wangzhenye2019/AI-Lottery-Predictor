@@ -29,7 +29,7 @@ import tensorflow as tf
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 
 parser = argparse.ArgumentParser(description="双色球/大乐透 AI 预测系统 - 一键执行")
-parser.add_argument('--name', default="ssq", type=str, choices=['ssq', 'dlt'], help="选择玩法：ssq(双色球)/dlt(大乐透)")
+parser.add_argument('--name', default="ssq", type=str, choices=['ssq', 'dlt', 'qlc', 'fc3d'], help="选择玩法：ssq(双色球)/dlt(大乐透)/qlc(七乐彩)/fc3d(福彩3D)")
 parser.add_argument('--train', action='store_true', help="是否重新训练模型 (默认只预测)")
 parser.add_argument('--strategy', default="hybrid", type=str, choices=['model_only', 'strategy_only', 'hybrid'], help="预测策略")
 parser.add_argument('--combinations', default=5, type=int, help="生成的预测组合数量")
@@ -49,8 +49,9 @@ class TrainArgsMock:
 
 
 def main():
+    game_names = {'ssq': '双色球', 'dlt': '大乐透', 'qlc': '七乐彩', 'fc3d': '福彩3D'}
     print("\n" + "="*50)
-    print(f"🚀 欢迎使用 AI 智能彩票预测系统 ({'双色球' if args.name == 'ssq' else '大乐透'})")
+    print(f"🚀 欢迎使用 AI 智能彩票预测系统 ({game_names.get(args.name, args.name)})")
     print("="*50 + "\n")
 
     steps = [

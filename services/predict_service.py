@@ -37,7 +37,7 @@ class PredictService:
             # 加载红球模型
             self.red_graph = tf.compat.v1.Graph()
             with self.red_graph.as_default():
-                if self.name == "ssq":
+                if self.name in ["ssq", "qlc"]:
                     LstmWithCRFModel(
                         batch_size=m_args["model_args"]["batch_size"],
                         n_class=m_args["model_args"]["red_n_class"],
@@ -70,7 +70,7 @@ class PredictService:
             # 加载蓝球模型
             self.blue_graph = tf.compat.v1.Graph()
             with self.blue_graph.as_default():
-                if self.name == "ssq":
+                if self.name in ["ssq", "qlc"]:
                     SignalLstmModel(
                         batch_size=m_args["model_args"]["batch_size"],
                         n_class=m_args["model_args"]["blue_n_class"],
@@ -196,9 +196,15 @@ class PredictService:
                 return pred.tolist()
             else:  # 大乐透
                 name_list = [(ball_name[1], i + 1) for i in range(sequence_len)]
-                data = predict_features[
-                    ["{}_{}".format(name[0], i) for name, i in name_list]
-                ].values.astype(int) - 1
+                if self.name == "fc3d":
+                    blue_columns = ["蓝球"]
+                else:
+                    blue_columns = [
+                        f"{x[0]}_{i+1}" 
+                        for x in ball_name[1:] 
+                        for i in range(sequence_len)
+                    ]
+                data = predict_features[blue_columns].values.astype(int) - 1
                 
                 with self.blue_graph.as_default():
                     reverse_sequence = tf.compat.v1.get_default_graph().get_tensor_by_name(
@@ -231,7 +237,7 @@ class PredictService:
         """
         m_args = model_args[self.name]["model_args"]
         
-        if self.name == "ssq":
+        if self.name in ["ssq", "qlc"]:
             # 红球预测
             red_pred, red_name_list = self.predict_red_balls(
                 predict_features,

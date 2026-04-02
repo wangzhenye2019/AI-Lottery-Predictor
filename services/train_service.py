@@ -61,7 +61,14 @@ class TrainService:
             x_data.append(sub_data[1:])
             y_data.append(sub_data[0])
         
-        cut_num = 6 if self.name == "ssq" else 5
+        if self.name == "ssq":
+            cut_num = 6
+        elif self.name == "qlc":
+            cut_num = 7
+        elif self.name == "fc3d":
+            cut_num = 3
+        else:
+            cut_num = 5
         
         x_data = np.array(x_data)
         y_data = np.array(y_data)
@@ -156,7 +163,7 @@ class TrainService:
             red_model = LstmWithCRFModel(
                 batch_size=m_args["model_args"]["batch_size"],
                 n_class=m_args["model_args"]["red_n_class"],
-                ball_num=m_args["model_args"]["sequence_len"] if self.name == "ssq" 
+                ball_num=m_args["model_args"]["sequence_len"] if self.name in ["ssq", "qlc"] 
                          else m_args["model_args"]["red_sequence_len"],
                 w_size=m_args["model_args"]["windows_size"],
                 embedding_size=m_args["model_args"]["red_embedding_size"],
@@ -190,7 +197,7 @@ class TrainService:
             sess.run(tf.compat.v1.global_variables_initializer())
             saver = tf.compat.v1.train.Saver(max_to_keep=3)
             
-            sequence_len = m_args["model_args"]["sequence_len"] if self.name == "ssq" \
+            sequence_len = m_args["model_args"]["sequence_len"] if self.name in ["ssq", "qlc"] \
                           else m_args["model_args"]["red_sequence_len"]
             
             # 训练循环
@@ -296,7 +303,7 @@ class TrainService:
         x_train = x_train - 1
         train_len = x_train.shape[0]
         
-        if self.name == "ssq":
+        if self.name in ["ssq", "qlc"]:
             # For blue ball SSQ, x_train has shape (batch_size, windows_size, 1) currently from create_data
             # Let's use reshape to safely flatten the last dimensions
             x_train = x_train.reshape((train_len, m_args["model_args"]["windows_size"]))
@@ -314,7 +321,7 @@ class TrainService:
         x_test = x_test - 1
         test_len = x_test.shape[0]
         
-        if self.name == "ssq":
+        if self.name in ["ssq", "qlc"]:
             x_test = x_test.reshape((test_len, m_args["model_args"]["windows_size"]))
             # y_test originally shape is (test_len, 1), so flatten it first
             y_test = y_test.flatten()
@@ -334,7 +341,7 @@ class TrainService:
         
         with tf.compat.v1.Session() as sess:
             # 构建模型
-            if self.name == "ssq":
+            if self.name in ["ssq", "qlc"]:
                 blue_model = SignalLstmModel(
                     batch_size=m_args["model_args"]["batch_size"],
                     n_class=m_args["model_args"]["blue_n_class"],
@@ -381,7 +388,7 @@ class TrainService:
             sess.run(tf.compat.v1.global_variables_initializer())
             saver = tf.compat.v1.train.Saver(max_to_keep=3)
             
-            sequence_len = "" if self.name == "ssq" else m_args["model_args"]["blue_sequence_len"]
+            sequence_len = "" if self.name in ["ssq", "qlc"] else m_args["model_args"]["blue_sequence_len"]
             
             # 训练循环
             epochs = m_args["model_args"]["blue_epochs"]
@@ -394,7 +401,7 @@ class TrainService:
                     batch_y = y_train[i:i+batch_size]
                     actual_batch_size = batch_x.shape[0]
                     
-                    if self.name == "ssq":
+                    if self.name in ["ssq", "qlc"]:
                         _, loss_, pred = sess.run(
                             [train_step, blue_model.loss, blue_model.pred_label],
                             feed_dict={
@@ -462,7 +469,7 @@ class TrainService:
                     self._save_model(saver, sess, "blue")
             
             log.info(f"训练耗时：{time.time() - start_time:.2f}秒")
-            self.pred_key[ball_name[1][0]] = blue_model.pred_label.name if self.name == "ssq" \
+            self.pred_key[ball_name[1][0]] = blue_model.pred_label.name if self.name in ["ssq", "qlc"] \
                                              else blue_model.pred_sequence.name
             
             if not (save_best_only and use_optimization):
@@ -482,6 +489,7 @@ class TrainService:
     ) -> None:
         """保存模型"""
         model_path_str = model_args[self.name]["path"][ball_type]
+        os.makedirs(model_path_str, exist_ok=True)
         model_name = f"{ball_type}_ball_model"
         save_path = os.path.join(model_path_str, f"{model_name}.{extension}")
         saver.save(sess, save_path, write_meta_graph=False)
@@ -506,7 +514,7 @@ class TrainService:
         for j in range(test_len):
             true = y_test[j:(j + 1), :]
             
-            if self.name == "ssq" and ball_type == "blue":
+            if self.name in ["ssq", "qlc"] and ball_type == "blue":
                 pred = sess.run(model.pred_label, feed_dict={"inputs:0": x_test[j:(j + 1), :]})
             else:
                 pred = sess.run(
@@ -529,7 +537,7 @@ class TrainService:
         for k, v in eval_dict.items():
             log.info(f"命中{k}个球，{v}期，占比：{round(v * 100 / test_len, 2)}%")
         
-        if self.name == "ssq" and ball_type == "blue":
+        if self.name in ["ssq", "qlc"] and ball_type == "blue":
             accuracy = round(all_true_count * 100 / test_len, 2)
         else:
             accuracy = round(all_true_count * 100 / (test_len * sequence_len), 2)
@@ -538,7 +546,9 @@ class TrainService:
     
     def save_pred_keys(self) -> None:
         """保存预测关键节点名"""
-        key_path = "{}/{}/{}".format(model_path, self.name, pred_key_name)
+        dir_path = "{}/{}".format(model_path, self.name)
+        os.makedirs(dir_path, exist_ok=True)
+        key_path = "{}/{}".format(dir_path, pred_key_name)
         with open(key_path, "w") as f:
             json.dump(self.pred_key, f)
         log.info(f"已保存预测关键节点到：{key_path}")

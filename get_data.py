@@ -26,6 +26,50 @@ def get_url(name):
     return url, path
 
 
+def spider_cwl(name, issue_count=3000):
+    """ 从中国福彩官网爬取数据 (支持 ssq, qlc, fc3d) """
+    url = "http://www.cwl.gov.cn/cwl_admin/front/cwlkj/search/kjxx/findDrawNotice"
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "application/json"
+    }
+    api_name = "3d" if name == "fc3d" else name
+    params = {"name": api_name, "issueCount": issue_count}
+    try:
+        r = requests.get(url, params=params, headers=headers, timeout=15)
+        r.raise_for_status()
+        data_json = r.json()
+        if "result" not in data_json:
+            logger.error(f"未找到数据: {data_json}")
+            return pd.DataFrame()
+            
+        data = []
+        results = data_json["result"]
+        for item in results:
+            row = dict()
+            row[u"期数"] = item.get("code")
+            red_str = item.get("red")
+            blue_str = item.get("blue")
+            
+            if name in ["ssq", "qlc"]:
+                reds = red_str.split(",")
+                for i, r_num in enumerate(reds):
+                    row[u"红球_{}".format(i+1)] = r_num
+                row[u"蓝球"] = blue_str
+            elif name == "fc3d":
+                # fc3d 没有蓝球，只有3个红球数字（百十个）
+                reds = red_str.split(",")
+                for i, r_num in enumerate(reds):
+                    row[u"红球_{}".format(i+1)] = str(int(r_num) + 1) # 为了兼容模型，0-9映射为1-10
+                row[u"蓝球"] = "1" # 假蓝球，避免修改大量架构代码
+            data.append(row)
+            
+        return pd.DataFrame(data)
+    except requests.exceptions.RequestException as e:
+        logger.error(f"爬取福彩数据失败: {e}")
+        raise
+
+
 def get_current_number(name):
     """ 获取最新一期数字
     :return: int
@@ -110,15 +154,27 @@ def run(name):
     :return:
     """
     try:
-        current_number = get_current_number(name)
-        logger.info("【{}】最新一期期号：{}".format(name_path[name]["name"], current_number))
-        logger.info("正在获取【{}】数据。。。".format(name_path[name]["name"]))
-        
         save_dir = name_path[name]["path"]
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
             
-        data = spider(name, 1, current_number, "train")
+        logger.info("正在获取【{}】数据。。。".format(name_path[name]["name"]))
+        
+        if name in ["ssq", "qlc", "fc3d"]:
+            # 优先使用官方 API，速度极快
+            df = spider_cwl(name, 5000)
+            if df.empty:
+                logger.error("通过官方接口未获取到数据！")
+                return
+            
+            output_path = os.path.join(save_dir, data_file_name)
+            df.to_csv(output_path, encoding="utf-8", index=False)
+            logger.info("【{}】最新一期期号：{}".format(name_path[name]["name"], df.iloc[0]["期数"]))
+            data = df
+        else:
+            current_number = get_current_number(name)
+            logger.info("【{}】最新一期期号：{}".format(name_path[name]["name"], current_number))
+            data = spider(name, 1, current_number, "train")
         
         file_path = os.path.join(save_dir, data_file_name)
         if os.path.exists(file_path):

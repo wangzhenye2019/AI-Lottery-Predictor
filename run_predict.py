@@ -38,12 +38,21 @@ def try_error(mode, name, predict_features, windows_size):
 def run(name):
     """ 执行预测 """
     try:
-        current_number = get_current_number(name)
+        windows_size = model_args[name]["model_args"]["windows_size"]
+        from get_data import spider_cwl, spider
+        if name in ["ssq", "qlc"]:
+            data = spider_cwl(name, windows_size)
+            if not data.empty:
+                current_number = data.iloc[0]["期数"]
+            else:
+                current_number = "未知"
+        else:
+            current_number = get_current_number(name)
+            data = spider(name, 1, current_number, "predict")
+            
         logger.info("【{}】最近一期:{}".format(name_path[name]["name"], current_number))
         
-        windows_size = model_args[name]["model_args"]["windows_size"]
-        data = spider(name, 1, current_number, "predict")
-        logger.info("【{}】预测期号：{}".format(name_path[name]["name"], int(current_number) + 1))
+        logger.info("【{}】预测期号：{}".format(name_path[name]["name"], int(current_number) + 1 if current_number != "未知" else "未知"))
         
         predict_features_ = try_error(1, name, data.iloc[:windows_size], windows_size)
         

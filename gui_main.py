@@ -74,8 +74,8 @@ class LotteryPredictorApp:
         # --- 玩法选择 ---
         ttk.Label(control_frame, text="彩票玩法:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
         self.game_var = tk.StringVar(value="ssq")
-        game_combo = ttk.Combobox(control_frame, textvariable=self.game_var, state="readonly", width=12)
-        game_combo['values'] = ("ssq (双色球)", "dlt (大乐透)")
+        game_combo = ttk.Combobox(control_frame, textvariable=self.game_var, state="readonly", width=15)
+        game_combo['values'] = ("ssq (双色球)", "dlt (大乐透)", "qlc (七乐彩)", "fc3d (福彩3D)")
         game_combo.grid(row=0, column=1, padx=5, pady=5, sticky=tk.W)
         
         # --- 预测策略选择 ---
@@ -145,8 +145,10 @@ class LotteryPredictorApp:
             n_combinations = self.combo_num_var.get()
             do_train = self.train_var.get()
             
+            game_names = {'ssq': '双色球', 'dlt': '大乐透', 'qlc': '七乐彩', 'fc3d': '福彩3D'}
+            
             print("="*60)
-            print(f"🚀 开始执行 AI 智能彩票预测系统 ({'双色球' if game_name == 'ssq' else '大乐透'})")
+            print(f"🚀 开始执行 AI 智能彩票预测系统 ({game_names.get(game_name, game_name)})")
             print("="*60 + "\n")
             
             # 1. 获取数据
