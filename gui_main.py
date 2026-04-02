@@ -1427,18 +1427,34 @@ class PickerPanel(ctk.CTkFrame):
         ).grid(row=0, column=1, padx=(10, 0))
 
         self._lucky_count = ctk.StringVar(value="5")
-        ctk.CTkOptionMenu(
-            top,
-            variable=self._lucky_count,
-            values=[str(i) for i in range(1, 101)],
-            fg_color=COLORS["chip"],
+        count_wrap = ctk.CTkFrame(top, fg_color="transparent")
+        count_wrap.grid(row=0, column=2, padx=(10, 0), sticky="e")
+        self._lucky_count_entry = ctk.CTkEntry(
+            count_wrap,
+            width=80,
+            textvariable=self._lucky_count,
+            fg_color=COLORS["card"],
+            border_color=COLORS["border"],
             text_color=COLORS["text"],
-            button_color=COLORS["primary"],
-            button_hover_color=COLORS["primary_hover"],
-            dropdown_fg_color=COLORS["card"],
-            dropdown_text_color=COLORS["text"],
-            width=90,
-        ).grid(row=0, column=2, padx=(10, 0), sticky="e")
+        )
+        self._lucky_count_entry.grid(row=0, column=0)
+        ctk.CTkLabel(
+            count_wrap,
+            text="(1-100)",
+            font=ctk.CTkFont(size=12),
+            text_color=COLORS["subtext"],
+        ).grid(row=0, column=1, padx=(8, 0))
+
+        def _normalize_count(*_):
+            try:
+                v = int((self._lucky_count.get() or "").strip())
+            except Exception:
+                v = 5
+            v = min(100, max(1, v))
+            self._lucky_count.set(str(v))
+
+        self._lucky_count_entry.bind("<FocusOut>", _normalize_count)
+        self._lucky_count_entry.bind("<Return>", _normalize_count)
 
         self._lucky_btn = ctk.CTkButton(
             top,
