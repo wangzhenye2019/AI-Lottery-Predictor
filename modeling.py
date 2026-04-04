@@ -1,133 +1,208 @@
-# -*- coding:utf-8 -*-
+# -*- coding: utf-8 -*-
 """
-Author: BigCat
+TensorFlow 1.x 兼容的模型定义模块
+包含 LstmWithCRFModel 和 SignalLstmModel
 """
-import warnings
-import os
-
-from utils.runtime_config import apply_runtime_env
-
-apply_runtime_env()
-
-# 抑制 TensorFlow 和 TFA 的警告信息（不影响功能）
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # 只显示 ERROR 级别日志
-warnings.filterwarnings('ignore', category=UserWarning, module='tensorflow_addons')
-warnings.filterwarnings('ignore', message='.*deprecated.*')
-warnings.filterwarnings('ignore', message='.*TensorFlow Addons.*')
-warnings.filterwarnings('ignore', message='.*InsecureRequestWarning.*')
-
 import tensorflow as tf
-import logging
-tf.get_logger().setLevel(logging.ERROR)
-
-from tensorflow_addons.text.crf import crf_decode, crf_log_likelihood
-
-# 关闭 eager 模式
-tf.compat.v1.disable_eager_execution()
-tf.compat.v1.experimental.output_all_intermediates(False)
 
 
-class LstmWithCRFModel(object):
-    """ lstm + crf解码模型
-    """
+class LstmWithCRFModel:
+    """LSTM + CRF 序列标注模型（用于红球/蓝球序列预测）"""
 
-    def __init__(self, batch_size, n_class, ball_num, w_size, embedding_size, words_size, hidden_size, layer_size):
-        self._inputs = tf.keras.layers.Input(
-            shape=(w_size, ball_num), name="inputs"
+    def __init__(
+        self,
+        batch_size: int,
+        n_class: int,
+        ball_num: int,
+        w_size: int,
+        embedding_size: int,
+        words_size: int,
+        hidden_size: int,
+        layer_size: int
+    ):
+        self.batch_size = batch_size
+        self.n_class = n_class
+        self.ball_num = ball_num
+        self.w_size = w_size
+        self.embedding_size = embedding_size
+        self.words_size = words_size
+        self.hidden_size = hidden_size
+        self.layer_size = layer_size
+
+        self._build_graph()
+
+    def _build_graph(self):
+        """构建计算图"""
+        # 输入占位符
+        self.inputs = tf.compat.v1.placeholder(
+            tf.int32, shape=[None, self.w_size, self.ball_num], name="inputs"
         )
-        self._tag_indices = tf.keras.layers.Input(
-            shape=(ball_num, ), dtype=tf.int32, name="tag_indices"
+        self.tag_indices = tf.compat.v1.placeholder(
+            tf.int32, shape=[None, self.ball_num], name="tag_indices"
         )
-        self._sequence_length = tf.keras.layers.Input(
-            shape=(), dtype=tf.int32, name="sequence_length"
+        self.sequence_length = tf.compat.v1.placeholder(
+            tf.int32, shape=[None], name="sequence_length"
         )
-        # 构建特征抽取
-        embedding = tf.keras.layers.Embedding(words_size, embedding_size)(self._inputs)
-        first_lstm = tf.convert_to_tensor(
-            [tf.keras.layers.LSTM(hidden_size)(embedding[:, :, i, :]) for i in range(ball_num)]
-        )
-        first_lstm = tf.transpose(first_lstm, perm=[1, 0, 2])
-        second_lstm = None
-        for _ in range(layer_size):
-            second_lstm = tf.keras.layers.LSTM(hidden_size, return_sequences=True)(first_lstm)
-        self._outputs = tf.keras.layers.Dense(n_class)(second_lstm)
-        # 构建损失函数
-        self._log_likelihood, self._transition_params = crf_log_likelihood(
-            self._outputs, self._tag_indices, self._sequence_length
-        )
-        self._loss = tf.reduce_sum(-self._log_likelihood)
-        #  构建预测
-        self._pred_sequence, self._viterbi_score = crf_decode(
-            self._outputs, self._transition_params, self._sequence_length
+        self.dropout_keep_prob = tf.compat.v1.placeholder(
+            tf.float32, name="dropout_keep_prob"
         )
 
-    @property
-    def inputs(self):
-        return self._inputs
-
-    @property
-    def tag_indices(self):
-        return self._tag_indices
-
-    @property
-    def sequence_length(self):
-        return self._sequence_length
-
-    @property
-    def outputs(self):
-        return self._outputs
-
-    @property
-    def transition_params(self):
-        return self._transition_params
-
-    @property
-    def loss(self):
-        return self._loss
-
-    @property
-    def pred_sequence(self):
-        return self._pred_sequence
-
-
-class SignalLstmModel(object):
-    """ 单向lstm序列模型
-    """
-
-    def __init__(self, batch_size, n_class, w_size, embedding_size, hidden_size, outputs_size, layer_size):
-        self._inputs = tf.keras.layers.Input(
-            shape=(w_size, ), dtype=tf.int32, name="inputs"
+        # Embedding 层
+        embedding = tf.Variable(
+            tf.random.uniform([self.words_size, self.embedding_size], -0.1, 0.1),
+            name="embedding"
         )
-        self._tag_indices = tf.keras.layers.Input(
-            shape=(n_class, ), dtype=tf.float32, name="tag_indices"
+        # inputs shape: (batch, w_size, ball_num) -> 展平后做 embedding
+        input_shape = tf.shape(self.inputs)
+        flat_inputs = tf.reshape(self.inputs, [-1, self.ball_num])
+        embedded = tf.nn.embedding_lookup(embedding, flat_inputs)
+        embedded = tf.reshape(
+            embedded,
+            [input_shape[0], self.w_size, self.ball_num * self.embedding_size]
         )
-        embedding = tf.keras.layers.Embedding(outputs_size, embedding_size)(self._inputs)
-        lstm = tf.keras.layers.LSTM(hidden_size, return_sequences=True)(embedding)
-        for _ in range(layer_size):
-            lstm = tf.keras.layers.LSTM(hidden_size, return_sequences=True)(lstm)
-        final_lstm = tf.keras.layers.LSTM(hidden_size, recurrent_dropout=0.2)(lstm)
-        self._outputs = tf.keras.layers.Dense(outputs_size, activation="softmax")(final_lstm)
-        # 构建损失函数
-        self._loss = - tf.reduce_sum(self._tag_indices * tf.math.log(self._outputs))
-        # 预测结果
-        self._pred_label = tf.argmax(self.outputs, axis=1)
 
-    @property
-    def inputs(self):
-        return self._inputs
+        # LSTM 层
+        lstm_cells = []
+        for _ in range(self.layer_size):
+            cell = tf.compat.v1.nn.rnn_cell.LSTMCell(
+                self.hidden_size,
+                state_is_tuple=True
+            )
+            cell = tf.compat.v1.nn.rnn_cell.DropoutWrapper(
+                cell, output_keep_prob=self.dropout_keep_prob
+            )
+            lstm_cells.append(cell)
 
-    @property
-    def tag_indices(self):
-        return self._tag_indices
+        multi_cell = tf.compat.v1.nn.rnn_cell.MultiRNNCell(
+            lstm_cells, state_is_tuple=True
+        )
 
-    @property
-    def outputs(self):
-        return self._outputs
+        outputs, _ = tf.nn.dynamic_rnn(
+            multi_cell,
+            embedded,
+            dtype=tf.float32,
+            sequence_length=self.sequence_length
+        )
 
-    @property
-    def loss(self):
-        return self._loss
+        # 输出层
+        logits = tf.compat.v1.layers.dense(
+            outputs,
+            self.n_class,
+            name="output_logits"
+        )
 
-    @property
-    def pred_label(self):
-        return self._pred_label
+        # CRF 层
+        log_likelihood, transition_params = tf.contrib.crf.crf_log_likelihood(
+            logits, self.tag_indices, self.sequence_length
+        )
+        self.loss = tf.reduce_mean(-log_likelihood, name="loss")
+
+        # 预测序列
+        self.pred_sequence, _ = tf.contrib.crf.crf_decode(
+            logits, transition_params, self.sequence_length, name="pred_sequence"
+        )
+
+        # 训练操作
+        self.train_op = tf.compat.v1.train.AdamOptimizer(
+            learning_rate=0.001
+        ).minimize(self.loss, name="train_op")
+
+
+class SignalLstmModel:
+    """单信号 LSTM 模型（用于单值预测，如双色球蓝球）"""
+
+    def __init__(
+        self,
+        batch_size: int,
+        n_class: int,
+        w_size: int,
+        embedding_size: int,
+        hidden_size: int,
+        outputs_size: int,
+        layer_size: int
+    ):
+        self.batch_size = batch_size
+        self.n_class = n_class
+        self.w_size = w_size
+        self.embedding_size = embedding_size
+        self.hidden_size = hidden_size
+        self.outputs_size = outputs_size
+        self.layer_size = layer_size
+
+        self._build_graph()
+
+    def _build_graph(self):
+        """构建计算图"""
+        # 输入占位符
+        self.inputs = tf.compat.v1.placeholder(
+            tf.int32, shape=[None, self.w_size], name="inputs"
+        )
+        self.tag_indices = tf.compat.v1.placeholder(
+            tf.float32, shape=[None, self.n_class], name="tag_indices"
+        )
+        self.labels = tf.compat.v1.placeholder(
+            tf.float32, shape=[None, self.n_class], name="labels"
+        )
+        self.sequence_length = tf.compat.v1.placeholder(
+            tf.int32, shape=[None], name="sequence_length"
+        )
+        self.dropout_keep_prob = tf.compat.v1.placeholder(
+            tf.float32, name="dropout_keep_prob"
+        )
+
+        # Embedding 层
+        embedding = tf.Variable(
+            tf.random.uniform([self.n_class, self.embedding_size], -0.1, 0.1),
+            name="embedding"
+        )
+        embedded = tf.nn.embedding_lookup(embedding, self.inputs)
+
+        # LSTM 层
+        lstm_cells = []
+        for _ in range(self.layer_size):
+            cell = tf.compat.v1.nn.rnn_cell.LSTMCell(
+                self.hidden_size,
+                state_is_tuple=True
+            )
+            cell = tf.compat.v1.nn.rnn_cell.DropoutWrapper(
+                cell, output_keep_prob=self.dropout_keep_prob
+            )
+            lstm_cells.append(cell)
+
+        multi_cell = tf.compat.v1.nn.rnn_cell.MultiRNNCell(
+            lstm_cells, state_is_tuple=True
+        )
+
+        outputs, last_state = tf.nn.dynamic_rnn(
+            multi_cell,
+            embedded,
+            dtype=tf.float32
+        )
+
+        # 取最后一个时间步的输出
+        last_output = outputs[:, -1, :]
+
+        # 全连接输出层
+        logits = tf.compat.v1.layers.dense(
+            last_output,
+            self.outputs_size,
+            name="output_logits"
+        )
+
+        # Softmax 输出
+        self.pred_label = tf.argmax(
+            logits, axis=1, output_type=tf.int32, name="pred_label"
+        )
+
+        # 交叉熵损失
+        self.loss = tf.reduce_mean(
+            tf.nn.softmax_cross_entropy_with_logits(
+                labels=self.tag_indices, logits=logits
+            ),
+            name="loss"
+        )
+
+        # 训练操作
+        self.train_op = tf.compat.v1.train.AdamOptimizer(
+            learning_rate=0.001
+        ).minimize(self.loss, name="train_op")

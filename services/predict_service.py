@@ -20,23 +20,32 @@ _RUNTIME_LOGGED = False
 class PredictService:
     """预测服务类"""
     
-    def __init__(self, name: str = "ssq"):
+    def __init__(self, name: str = "ssq", use_db: bool = True):
         """
         初始化预测服务
         
         Args:
             name: 玩法名称 (ssq/dlt)
+            use_db: 是否使用数据库记录预测结果
         """
         self.name = name
+        self.use_db = use_db
         self.red_sess = None
         self.blue_sess = None
         self.red_graph = None
         self.blue_graph = None
         self.pred_key_d = None
+        self.db = None
+        self.current_prediction = None
     
     def load_models(self) -> None:
         """加载红球和蓝球模型"""
         try:
+            # 初始化数据库连接
+            if self.use_db:
+                from database import get_db_manager
+                self.db = get_db_manager()
+
             m_args = model_args[self.name]
             global _RUNTIME_LOGGED
             tuning = get_runtime_tuning()
@@ -52,75 +61,36 @@ class PredictService:
                 inter_op_parallelism_threads=tuning.tf_inter_threads,
                 allow_soft_placement=True,
             )
-            # 加载红球模型
+            # 加载红球模型（使用 import_meta_graph 确保图结构完全一致）
             self.red_graph = tf.compat.v1.Graph()
             with self.red_graph.as_default():
-                if self.name in ["ssq", "qlc"]:
-                    LstmWithCRFModel(
-                        batch_size=m_args["model_args"]["batch_size"],
-                        n_class=m_args["model_args"]["red_n_class"],
-                        ball_num=m_args["model_args"]["sequence_len"],
-                        w_size=m_args["model_args"]["windows_size"],
-                        embedding_size=m_args["model_args"]["red_embedding_size"],
-                        words_size=m_args["model_args"]["red_n_class"],
-                        hidden_size=m_args["model_args"]["red_hidden_size"],
-                        layer_size=m_args["model_args"]["red_layer_size"]
-                    )
-                else:
-                    LstmWithCRFModel(
-                        batch_size=m_args["model_args"]["batch_size"],
-                        n_class=m_args["model_args"]["red_n_class"],
-                        ball_num=m_args["model_args"]["red_sequence_len"],
-                        w_size=m_args["model_args"]["windows_size"],
-                        embedding_size=m_args["model_args"]["red_embedding_size"],
-                        words_size=m_args["model_args"]["red_n_class"],
-                        hidden_size=m_args["model_args"]["red_hidden_size"],
-                        layer_size=m_args["model_args"]["red_layer_size"]
-                    )
-                red_saver = tf.compat.v1.train.Saver()
+                # 直接加载训练时保存的 meta graph
+                red_meta_path = os.path.join(m_args["path"]["red"], "red_ball_model.ckpt.meta")
+                red_saver = tf.compat.v1.train.import_meta_graph(red_meta_path)
             self.red_sess = tf.compat.v1.Session(graph=self.red_graph, config=sess_config)
             red_saver.restore(
-                self.red_sess, 
+                self.red_sess,
                 os.path.join(m_args["path"]["red"], "red_ball_model.ckpt")
             )
             log.info("已加载红球模型")
-            
-            # 加载蓝球模型
+
+            # 加载蓝球模型（使用 import_meta_graph 确保图结构完全一致）
             self.blue_graph = tf.compat.v1.Graph()
             with self.blue_graph.as_default():
-                if self.name in ["ssq", "qlc"]:
-                    SignalLstmModel(
-                        batch_size=m_args["model_args"]["batch_size"],
-                        n_class=m_args["model_args"]["blue_n_class"],
-                        w_size=m_args["model_args"]["windows_size"],
-                        embedding_size=m_args["model_args"]["blue_embedding_size"],
-                        hidden_size=m_args["model_args"]["blue_hidden_size"],
-                        outputs_size=m_args["model_args"]["blue_n_class"],
-                        layer_size=m_args["model_args"]["blue_layer_size"]
-                    )
-                else:
-                    LstmWithCRFModel(
-                        batch_size=m_args["model_args"]["batch_size"],
-                        n_class=m_args["model_args"]["blue_n_class"],
-                        ball_num=m_args["model_args"]["blue_sequence_len"],
-                        w_size=m_args["model_args"]["windows_size"],
-                        embedding_size=m_args["model_args"]["blue_embedding_size"],
-                        words_size=m_args["model_args"]["blue_n_class"],
-                        hidden_size=m_args["model_args"]["blue_hidden_size"],
-                        layer_size=m_args["model_args"]["blue_layer_size"]
-                    )
-                blue_saver = tf.compat.v1.train.Saver()
+                # 直接加载训练时保存的 meta graph
+                blue_meta_path = os.path.join(m_args["path"]["blue"], "blue_ball_model.ckpt.meta")
+                blue_saver = tf.compat.v1.train.import_meta_graph(blue_meta_path)
             self.blue_sess = tf.compat.v1.Session(graph=self.blue_graph, config=sess_config)
             blue_saver.restore(
-                self.blue_sess, 
+                self.blue_sess,
                 os.path.join(m_args["path"]["blue"], "blue_ball_model.ckpt")
             )
             log.info("已加载蓝球模型")
-            
+
             # 加载关键节点名
             with open(os.path.join(model_path, self.name, pred_key_name)) as f:
                 self.pred_key_d = json.load(f)
-                
+
         except Exception as e:
             raise ModelLoadError(f"模型加载失败：{str(e)}", model_name=f"{self.name}_model")
     
@@ -217,11 +187,15 @@ class PredictService:
                 if self.name == "fc3d":
                     blue_columns = ["蓝球"]
                 else:
-                    blue_columns = [
-                        f"{x[0]}_{i+1}" 
-                        for x in ball_name[1:] 
-                        for i in range(sequence_len)
-                    ]
+                    # pl3/pl5/fc3d: 蓝球列名
+                    if sequence_len == 1:
+                        blue_columns = [ball_name[1][0]]  # 直接使用 "蓝球"
+                    else:
+                        blue_columns = [
+                            f"{x[0]}_{i+1}" 
+                            for x in ball_name[1:] 
+                            for i in range(sequence_len)
+                        ]
                 data = predict_features[blue_columns].values.astype(int) - 1
                 
                 with self.blue_graph.as_default():
@@ -242,20 +216,26 @@ class PredictService:
     
     def get_final_prediction(
         self,
-        predict_features: np.ndarray
+        predict_features: np.ndarray,
+        issue_number: Optional[str] = None,
+        strategy_name: str = "model_only",
+        confidence_score: Optional[float] = None
     ) -> Dict[str, Union[List[int], int]]:
         """
         获取最终预测结果（简化版）
-        
+
         Args:
             predict_features: 预测特征数据
-        
+            issue_number: 期号（用于记录）
+            strategy_name: 策略名称
+            confidence_score: 置信度分数
+
         Returns:
             预测结果字典 {'red': [...], 'blue': ...}
         """
         m_args = model_args[self.name]["model_args"]
         tuning = get_runtime_tuning()
-        
+
         if self.name in ["ssq", "qlc"]:
             if tuning.parallel_predict:
                 with ThreadPoolExecutor(max_workers=2) as ex:
@@ -275,8 +255,8 @@ class PredictService:
                     m_args["windows_size"],
                     ball_count=1
                 )
-            
-            return {
+
+            result = {
                 'red': sorted([int(res) + 1 for res in red_pred]),
                 'blue': int(blue_pred[0]) + 1
             }
@@ -299,8 +279,79 @@ class PredictService:
                     m_args["windows_size"],
                     ball_count=2
                 )
-            
-            return {
+
+            result = {
                 'red': sorted([int(res) + 1 for res in red_pred]),
                 'blue': sorted([int(res) + 1 for res in blue_pred])
             }
+
+        # 保存预测记录到数据库
+        if self.use_db and issue_number and self.db:
+            try:
+                lottery_draw = self.db.get_latest_draw(self.name)
+                lottery_draw_id = lottery_draw.id if lottery_draw else None
+
+                prediction = self.db.save_prediction(
+                    lottery_type=self.name,
+                    issue_number=issue_number,
+                    predicted_red=result['red'],
+                    predicted_blue=result.get('blue'),
+                    strategy_used=strategy_name,
+                    confidence_score=confidence_score,
+                    model_version="v2.0",
+                    lottery_draw_id=lottery_draw_id
+                )
+                self.current_prediction = prediction
+                log.info(f"预测记录已保存到数据库，ID: {prediction.id}")
+            except Exception as e:
+                log.warning(f"保存预测记录失败: {e}")
+
+        return result
+
+    def record_actual_result(
+        self,
+        issue_number: str,
+        actual_red: List[int],
+        actual_blue: Optional[int]
+    ) -> bool:
+        """
+        记录实际开奖结果并计算命中
+
+        Args:
+            issue_number: 期号
+            actual_red: 实际红球
+            actual_blue: 实际蓝球
+
+        Returns:
+            是否成功更新
+        """
+        if not self.use_db or not self.db:
+            return False
+
+        try:
+            # 查找对应的预测记录
+            predictions = self.db.get_predictions(
+                lottery_type=self.name,
+                limit=100
+            )
+            target = None
+            for p in predictions:
+                if p.issue_number == issue_number and p.is_hit is None:
+                    target = p
+                    break
+
+            if target:
+                success = self.db.update_prediction_result(
+                    prediction_id=target.id,
+                    actual_red=actual_red,
+                    actual_blue=actual_blue
+                )
+                if success:
+                    log.info(f"期号 {issue_number} 预测结果已更新，命中: {target.is_hit}, 命中红球数: {target.hit_count}")
+                return success
+            else:
+                log.warning(f"未找到期号 {issue_number} 的预测记录")
+                return False
+        except Exception as e:
+            log.error(f"记录实际结果失败: {e}")
+            return False

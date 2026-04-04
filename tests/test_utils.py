@@ -6,8 +6,9 @@ import pytest
 import sys
 import os
 
-# 添加项目路径
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+# 添加项目根目录 predict_Lottery_ticket
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _ROOT)
 
 from utils.exceptions import (
     LotteryException, DataFetchError, DataValidationError,

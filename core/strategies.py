@@ -489,10 +489,48 @@ class LotteryStrategy:
         log.info(f"AC 指数统计 - 均值：{stats['mean']:.2f}, 范围：[{stats['min']}, {stats['max']}]")
         return stats
     
-    def recommend_balls(self, strategy='hybrid', n_red=6, n_blue=1, **kwargs):
-        """推荐号码（兼容旧接口）"""
-        red_candidates = self.recommender.recommend_candidates('red', candidate_count=12)
-        blue_candidates = self.recommender.recommend_candidates('blue', candidate_count=6)
+    def recommend_balls(self, strategy='hybrid', n_red=6, n_blue=1, selected_strategies=None, **kwargs):
+        """推荐号码（兼容旧接口）
+        
+        Args:
+            strategy: 模式 hybrid/model_only/strategy_only
+            selected_strategies: 选中的策略列表，如 ['xgboost', 'arima', ...]
+        """
+        # 如果指定了策略列表，根据策略权重调整推荐
+        if selected_strategies:
+            # 根据策略设置不同的权重
+            strategy_weights = {
+                'xgboost': {'hot': 0.40, 'cold': 0.20, 'omission': 0.25, 'probability': 0.15},
+                'arima': {'hot': 0.25, 'cold': 0.35, 'omission': 0.25, 'probability': 0.15},
+                'apriori': {'hot': 0.30, 'cold': 0.25, 'omission': 0.30, 'probability': 0.15},
+                'clustering': {'hot': 0.35, 'cold': 0.25, 'omission': 0.20, 'probability': 0.20},
+                'genetic': {'hot': 0.30, 'cold': 0.30, 'omission': 0.20, 'probability': 0.20},
+                'ensemble': {'hot': 0.35, 'cold': 0.25, 'omission': 0.25, 'probability': 0.15},
+            }
+            
+            # 合并权重（简单平均）
+            merged_weights = {'hot': 0.0, 'cold': 0.0, 'omission': 0.0, 'probability': 0.0}
+            count = 0
+            for s in selected_strategies:
+                if s in strategy_weights:
+                    for key in merged_weights:
+                        merged_weights[key] += strategy_weights[s][key]
+                    count += 1
+            
+            if count > 0:
+                for key in merged_weights:
+                    merged_weights[key] /= count
+                
+                # 使用合并权重生成候选
+                red_candidates = self.recommender.recommend_candidates('red', candidate_count=12, weights=merged_weights)
+                blue_candidates = self.recommender.recommend_candidates('blue', candidate_count=6, weights=merged_weights)
+            else:
+                red_candidates = self.recommender.recommend_candidates('red', candidate_count=12)
+                blue_candidates = self.recommender.recommend_candidates('blue', candidate_count=6)
+        else:
+            # 默认混合策略
+            red_candidates = self.recommender.recommend_candidates('red', candidate_count=12)
+            blue_candidates = self.recommender.recommend_candidates('blue', candidate_count=6)
         
         log.info(f"推荐红球候选：{sorted(red_candidates)}")
         log.info(f"推荐蓝球候选：{sorted(blue_candidates)}")

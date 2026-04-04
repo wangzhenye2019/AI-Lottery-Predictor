@@ -1,207 +1,311 @@
 # -*- coding: utf-8 -*-
 """
+兼容性配置模块
+为旧代码提供 config 导入支持，所有变量从 config_new 派生
 Author: BigCat
 """
 import os
+from config_new import (
+    model_args as _flat_model_args,
+    name_path,
+    data_file_name,
+    ball_name,
+    PROXY_CONFIG,
+    config
+)
 
-ball_name = [
-    ("红球", "red"),
-    ("蓝球", "blue")
-]
+# ============================================================
+# 基础兼容变量
+# ============================================================
 
-data_file_name = "data.csv"
+# 模型保存根目录
+model_path = os.path.join(config.data_dir, "models")
 
-name_path = {
-    "ssq": {
-        "name": "双色球",
-        "path": "data/ssq/"
-    },
-    "dlt": {
-        "name": "大乐透",
-        "path": "data/dlt/"
-    },
-    "qlc": {
-        "name": "七乐彩",
-        "path": "data/qlc/"
-    },
-    "fc3d": {
-        "name": "福彩3D",
-        "path": "data/fc3d/"
-    }
-}
+# 预测关键节点文件名
+pred_key_name = "pred_key.json"
 
-model_path = os.path.join(os.getcwd(), "model")
+# 模型检查点文件扩展名
+extension = "ckpt"
 
-model_args = {
+# ============================================================
+# model_args 完整嵌套结构（按彩票类型）
+# 旧代码期望 model_args[lottery_type]["model_args"][...]
+#       和 model_args[lottery_type]["train_args"][...]
+#       和 model_args[lottery_type]["path"]["red"/"blue"]
+# ============================================================
+
+_model_args = {
     "ssq": {
         "model_args": {
-            "windows_size": 5,  # 增加窗口大小，捕捉更多历史模式
-            "batch_size": 64,   # 改为 64，支持批量数据训练，极大提升速度
+            "batch_size": 64,
+            "red_n_class": 34,
+            "blue_n_class": 17,
             "sequence_len": 6,
-            "red_n_class": 33,  # 红球类别数（1-33）
-            "red_epochs": 50,   # 增加训练轮数
-            "red_embedding_size": 64,  # 增加嵌入维度
-            "red_hidden_size": 128,    # 增加隐藏层维度
-            "red_layer_size": 2,       # 增加 LSTM 层数
-            "blue_n_class": 16,
-            "blue_epochs": 50,
-            "blue_embedding_size": 64,
-            "blue_hidden_size": 128,
-            "blue_layer_size": 2
-        },
-        "train_args": {
-            "red_learning_rate": 0.0005,  # 降低学习率
-            "red_beta1": 0.9,
-            "red_beta2": 0.999,
-            "red_epsilon": 1e-08,
-            "red_dropout": 0.3,           # 添加 dropout 防止过拟合
-            "blue_learning_rate": 0.0005,
-            "blue_beta1": 0.9,
-            "blue_beta2": 0.999,
-            "blue_epsilon": 1e-08,
-            "blue_dropout": 0.3
-        },
-        "strategy_args": {
-            "hot_recent_n": 50,           # 冷热号分析最近期数
-            "hot_weight": 0.35,           # 热号权重
-            "cold_weight": 0.25,          # 冷号权重
-            "omission_weight": 0.25,      # 遗漏权重
-            "probability_weight": 0.15,   # 概率权重
-            "sum_range_min": 90,          # 和值范围最小值
-            "sum_range_max": 120,         # 和值范围最大值
-            "ac_range_min": 4,            # AC 指数最小值
-            "ac_range_max": 10            # AC 指数最大值
-        },
-        "path": {
-            "red": os.path.join(model_path, "ssq", "red_ball_model"),
-            "blue": os.path.join(model_path, "ssq", "blue_ball_model")
-        }
-    },
-    "dlt": {
-        "model_args": {
-            "windows_size": 3,
-            "batch_size": 64,
-            "red_sequence_len": 5,
-            "red_n_class": 35,
-            "red_epochs": 1,
-            "red_embedding_size": 32,
-            "red_hidden_size": 32,
-            "red_layer_size": 1,
-            "blue_sequence_len": 2,
-            "blue_n_class": 12,
-            "blue_epochs": 1,
-            "blue_embedding_size": 32,
-            "blue_hidden_size": 32,
-            "blue_layer_size": 1
-        },
-        "train_args": {
-            "red_learning_rate": 0.001,
-            "red_beta1": 0.9,
-            "red_beta2": 0.999,
-            "red_epsilon": 1e-08,
-            "blue_learning_rate": 0.001,
-            "blue_beta1": 0.9,
-            "blue_beta2": 0.999,
-            "blue_epsilon": 1e-08
-        },
-        "path": {
-            "red": os.path.join(model_path, "dlt", "red_ball_model"),
-            "blue": os.path.join(model_path, "dlt", "blue_ball_model")
-        }
-    },
-    "qlc": {
-        "model_args": {
-            "windows_size": 5,
-            "batch_size": 64,
-            "sequence_len": 7,  # 7 red
-            "red_n_class": 30,  # 红球类别数（1-30）
-            "red_epochs": 50,
+            "red_sequence_len": 6,
+            "blue_sequence_len": 1,
+            "windows_size": 10,
             "red_embedding_size": 64,
             "red_hidden_size": 128,
             "red_layer_size": 2,
-            "blue_n_class": 30,
+            "red_epochs": 50,
+            "blue_embedding_size": 32,
+            "blue_hidden_size": 64,
+            "blue_layer_size": 2,
             "blue_epochs": 50,
-            "blue_embedding_size": 64,
-            "blue_hidden_size": 128,
-            "blue_layer_size": 2
-        },
-        "train_args": {
-            "red_learning_rate": 0.0005,
-            "red_beta1": 0.9,
-            "red_beta2": 0.999,
-            "red_epsilon": 1e-08,
-            "red_dropout": 0.3,
-            "blue_learning_rate": 0.0005,
-            "blue_beta1": 0.9,
-            "blue_beta2": 0.999,
-            "blue_epsilon": 1e-08,
-            "blue_dropout": 0.3
-        },
-        "strategy_args": {
-            "hot_recent_n": 50,
-            "hot_weight": 0.35,
-            "cold_weight": 0.25,
-            "omission_weight": 0.25,
-            "probability_weight": 0.15,
-            "sum_range_min": 70,
-            "sum_range_max": 140,
-            "ac_range_min": 4,
-            "ac_range_max": 10
-        },
-        "path": {
-            "red": os.path.join(model_path, "qlc", "red_ball_model"),
-            "blue": os.path.join(model_path, "qlc", "blue_ball_model")
-        }
-    },
-    "fc3d": {
-        "model_args": {
-            "windows_size": 3,
-            "batch_size": 64,
-            "red_sequence_len": 3,
-            "red_n_class": 10,
-            "red_epochs": 20,
-            "red_embedding_size": 32,
-            "red_hidden_size": 32,
-            "red_layer_size": 1,
-            "blue_sequence_len": 1,
-            "blue_n_class": 2,
-            "blue_epochs": 1,
-            "blue_embedding_size": 8,
-            "blue_hidden_size": 8,
-            "blue_layer_size": 1
         },
         "train_args": {
             "red_learning_rate": 0.001,
             "red_beta1": 0.9,
             "red_beta2": 0.999,
-            "red_epsilon": 1e-08,
-            "red_dropout": 0.3,
+            "red_epsilon": 1e-8,
             "blue_learning_rate": 0.001,
             "blue_beta1": 0.9,
             "blue_beta2": 0.999,
-            "blue_epsilon": 1e-08,
-            "blue_dropout": 0.3
-        },
-        "strategy_args": {
-            "hot_recent_n": 50,
-            "hot_weight": 0.35,
-            "cold_weight": 0.25,
-            "omission_weight": 0.25,
-            "probability_weight": 0.15,
-            "sum_range_min": 0,
-            "sum_range_max": 27,
-            "ac_range_min": 0,
-            "ac_range_max": 3
+            "blue_epsilon": 1e-8,
         },
         "path": {
-            "red": os.path.join(model_path, "fc3d", "red_ball_model"),
-            "blue": os.path.join(model_path, "fc3d", "blue_ball_model")
+            "red": os.path.join(model_path, "ssq", "red"),
+            "blue": os.path.join(model_path, "ssq", "blue"),
+        }
+    },
+    "dlt": {
+        "model_args": {
+            "batch_size": 64,
+            "red_n_class": 36,
+            "blue_n_class": 13,
+            "sequence_len": 5,
+            "red_sequence_len": 5,
+            "blue_sequence_len": 2,
+            "windows_size": 10,
+            "red_embedding_size": 64,
+            "red_hidden_size": 128,
+            "red_layer_size": 2,
+            "red_epochs": 50,
+            "blue_embedding_size": 32,
+            "blue_hidden_size": 64,
+            "blue_layer_size": 2,
+            "blue_epochs": 50,
+        },
+        "train_args": {
+            "red_learning_rate": 0.001,
+            "red_beta1": 0.9,
+            "red_beta2": 0.999,
+            "red_epsilon": 1e-8,
+            "blue_learning_rate": 0.001,
+            "blue_beta1": 0.9,
+            "blue_beta2": 0.999,
+            "blue_epsilon": 1e-8,
+        },
+        "path": {
+            "red": os.path.join(model_path, "dlt", "red"),
+            "blue": os.path.join(model_path, "dlt", "blue"),
+        }
+    },
+    "qlc": {
+        "model_args": {
+            "batch_size": 64,
+            "red_n_class": 31,
+            "blue_n_class": 31,
+            "sequence_len": 7,
+            "red_sequence_len": 7,
+            "blue_sequence_len": 1,
+            "windows_size": 10,
+            "red_embedding_size": 64,
+            "red_hidden_size": 128,
+            "red_layer_size": 2,
+            "red_epochs": 50,
+            "blue_embedding_size": 32,
+            "blue_hidden_size": 64,
+            "blue_layer_size": 2,
+            "blue_epochs": 50,
+        },
+        "train_args": {
+            "red_learning_rate": 0.001,
+            "red_beta1": 0.9,
+            "red_beta2": 0.999,
+            "red_epsilon": 1e-8,
+            "blue_learning_rate": 0.001,
+            "blue_beta1": 0.9,
+            "blue_beta2": 0.999,
+            "blue_epsilon": 1e-8,
+        },
+        "path": {
+            "red": os.path.join(model_path, "qlc", "red"),
+            "blue": os.path.join(model_path, "qlc", "blue"),
+        }
+    },
+    "fc3d": {
+        "model_args": {
+            "batch_size": 64,
+            "red_n_class": 10,
+            "blue_n_class": 10,
+            "sequence_len": 3,
+            "red_sequence_len": 3,
+            "blue_sequence_len": 1,
+            "windows_size": 10,
+            "red_embedding_size": 32,
+            "red_hidden_size": 64,
+            "red_layer_size": 2,
+            "red_epochs": 50,
+            "blue_embedding_size": 32,
+            "blue_hidden_size": 64,
+            "blue_layer_size": 2,
+            "blue_epochs": 50,
+        },
+        "train_args": {
+            "red_learning_rate": 0.001,
+            "red_beta1": 0.9,
+            "red_beta2": 0.999,
+            "red_epsilon": 1e-8,
+            "blue_learning_rate": 0.001,
+            "blue_beta1": 0.9,
+            "blue_beta2": 0.999,
+            "blue_epsilon": 1e-8,
+        },
+        "path": {
+            "red": os.path.join(model_path, "fc3d", "red"),
+            "blue": os.path.join(model_path, "fc3d", "blue"),
+        }
+    },
+    "pl3": {
+        "model_args": {
+            "batch_size": 64,
+            "red_n_class": 10,
+            "blue_n_class": 10,
+            "sequence_len": 3,
+            "red_sequence_len": 3,
+            "blue_sequence_len": 1,
+            "windows_size": 10,
+            "red_embedding_size": 32,
+            "red_hidden_size": 64,
+            "red_layer_size": 2,
+            "red_epochs": 50,
+            "blue_embedding_size": 32,
+            "blue_hidden_size": 64,
+            "blue_layer_size": 2,
+            "blue_epochs": 50,
+        },
+        "train_args": {
+            "red_learning_rate": 0.001,
+            "red_beta1": 0.9,
+            "red_beta2": 0.999,
+            "red_epsilon": 1e-8,
+            "blue_learning_rate": 0.001,
+            "blue_beta1": 0.9,
+            "blue_beta2": 0.999,
+            "blue_epsilon": 1e-8,
+        },
+        "path": {
+            "red": os.path.join(model_path, "pl3", "red"),
+            "blue": os.path.join(model_path, "pl3", "blue"),
+        }
+    },
+    "pl5": {
+        "model_args": {
+            "batch_size": 64,
+            "red_n_class": 10,
+            "blue_n_class": 10,
+            "sequence_len": 5,
+            "red_sequence_len": 5,
+            "blue_sequence_len": 1,
+            "windows_size": 10,
+            "red_embedding_size": 32,
+            "red_hidden_size": 64,
+            "red_layer_size": 2,
+            "red_epochs": 50,
+            "blue_embedding_size": 32,
+            "blue_hidden_size": 64,
+            "blue_layer_size": 2,
+            "blue_epochs": 50,
+        },
+        "train_args": {
+            "red_learning_rate": 0.001,
+            "red_beta1": 0.9,
+            "red_beta2": 0.999,
+            "red_epsilon": 1e-8,
+            "blue_learning_rate": 0.001,
+            "blue_beta1": 0.9,
+            "blue_beta2": 0.999,
+            "blue_epsilon": 1e-8,
+        },
+        "path": {
+            "red": os.path.join(model_path, "pl5", "red"),
+            "blue": os.path.join(model_path, "pl5", "blue"),
+        }
+    },
+    "qxc": {
+        "model_args": {
+            "batch_size": 64,
+            "red_n_class": 10,
+            "blue_n_class": 10,
+            "sequence_len": 6,
+            "red_sequence_len": 6,
+            "blue_sequence_len": 1,
+            "windows_size": 10,
+            "red_embedding_size": 32,
+            "red_hidden_size": 64,
+            "red_layer_size": 2,
+            "red_epochs": 50,
+            "blue_embedding_size": 32,
+            "blue_hidden_size": 64,
+            "blue_layer_size": 2,
+            "blue_epochs": 50,
+        },
+        "train_args": {
+            "red_learning_rate": 0.001,
+            "red_beta1": 0.9,
+            "red_beta2": 0.999,
+            "red_epsilon": 1e-8,
+            "blue_learning_rate": 0.001,
+            "blue_beta1": 0.9,
+            "blue_beta2": 0.999,
+            "blue_epsilon": 1e-8,
+        },
+        "path": {
+            "red": os.path.join(model_path, "qxc", "red"),
+            "blue": os.path.join(model_path, "qxc", "blue"),
+        }
+    },
+    "kl8": {
+        "model_args": {
+            "batch_size": 64,
+            "red_n_class": 81,
+            "blue_n_class": 81,
+            "sequence_len": 20,
+            "red_sequence_len": 20,
+            "blue_sequence_len": 1,
+            "windows_size": 10,
+            "red_embedding_size": 128,
+            "red_hidden_size": 256,
+            "red_layer_size": 2,
+            "red_epochs": 50,
+            "blue_embedding_size": 64,
+            "blue_hidden_size": 128,
+            "blue_layer_size": 2,
+            "blue_epochs": 50,
+        },
+        "train_args": {
+            "red_learning_rate": 0.001,
+            "red_beta1": 0.9,
+            "red_beta2": 0.999,
+            "red_epsilon": 1e-8,
+            "blue_learning_rate": 0.001,
+            "blue_beta1": 0.9,
+            "blue_beta2": 0.999,
+            "blue_epsilon": 1e-8,
+        },
+        "path": {
+            "red": os.path.join(model_path, "kl8", "red"),
+            "blue": os.path.join(model_path, "kl8", "blue"),
         }
     }
 }
 
-# 模型名
-pred_key_name = "key_name.json"
-red_ball_model_name = "red_ball_model"
-blue_ball_model_name = "blue_ball_model"
-extension = "ckpt"
+# 覆盖 config_new 中的扁平 model_args，提供完整嵌套结构
+model_args = _model_args
+
+# 确保模型目录存在
+os.makedirs(model_path, exist_ok=True)
+for lottery_type in model_args:
+    os.makedirs(model_args[lottery_type]["path"]["red"], exist_ok=True)
+    os.makedirs(model_args[lottery_type]["path"]["blue"], exist_ok=True)

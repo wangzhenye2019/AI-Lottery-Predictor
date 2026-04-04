@@ -15,6 +15,8 @@ from modeling import LstmWithCRFModel, SignalLstmModel
 from utils.logger import log
 from utils.exceptions import TrainingError, DataValidationError
 
+tf.compat.v1.experimental.output_all_intermediates(True)
+
 
 class TrainService:
     """训练服务类"""
@@ -67,6 +69,10 @@ class TrainService:
             cut_num = 7
         elif self.name == "fc3d":
             cut_num = 3
+        elif self.name == "pl3":
+            cut_num = 3
+        elif self.name == "pl5":
+            cut_num = 5
         else:
             cut_num = 5
         
@@ -97,9 +103,38 @@ class TrainService:
         Returns:
             (训练数据，测试数据)
         """
+        # 优先从数据库读取数据，如果没有则从CSV读取
         path = "{}{}".format(name_path[self.name]["path"], data_file_name)
-        data = pd.read_csv(path)
-        log.info(f"从路径读取数据：{path}")
+        
+        # 尝试从数据库获取数据
+        try:
+            from database import get_db_manager
+            db = get_db_manager()
+            draws = db.get_lottery_draws_dict(self.name, limit=5000)
+            db.close()
+            
+            if draws and len(draws) > 0:
+                import pandas as pd
+                data_list = []
+                for draw in draws:
+                    row = {'期数': draw['issue_number']}
+                    red_balls = draw['red_balls'] or []
+                    for i, ball in enumerate(red_balls):
+                        row[f'红球_{i+1}'] = ball
+                    row['蓝球'] = draw.get('blue_ball', 0) or 0
+                    data_list.append(row)
+                
+                data = pd.DataFrame(data_list)
+                # 按期号正序排列（最旧的在前，最新的在后）
+                data = data.sort_values('期数').reset_index(drop=True)
+                log.info(f"从数据库读取数据：{len(data)} 条")
+            else:
+                data = pd.read_csv(path)
+                log.info(f"从路径读取数据：{path}")
+        except Exception as e:
+            log.warning(f"从数据库读取失败，尝试CSV: {e}")
+            data = pd.read_csv(path)
+            log.info(f"从路径读取数据：{path}")
         
         train_size = int(len(data) * self.train_test_split)
         train_data = self.create_data(data.iloc[:train_size], windows)
@@ -140,15 +175,25 @@ class TrainService:
         """
         m_args = model_args[self.name]
         
-        # 数据预处理
-        x_train = x_train - 1
-        y_train = y_train - 1
+        # 数据预处理：根据玩法类型决定是否减1
+        # SSQ/DLT/QLC 原始数据为 1-33/35/30，需减1映射到 0-32/34/29
+        # PL3/PL5/F3D 原始数据为 0-9，已符合要求，无需减1
+        need_offset = self.name in ["ssq", "dlt", "qlc"]
+        
+        if need_offset:
+            x_train = x_train - 1
+            y_train = y_train - 1
+            x_test = x_test - 1
+            y_test = y_test - 1
+            log.info(f"应用数据偏移：-1（玩法：{self.name}）")
+        else:
+            log.info(f"无需数据偏移（玩法：{self.name}，原始标签 0-9 已符合要求）")
+        
         train_len = x_train.shape[0]
         log.info(f"训练特征维度：{x_train.shape}")
         log.info(f"训练标签维度：{y_train.shape}")
-        
-        x_test = x_test - 1
-        y_test = y_test - 1
+        log.info(f"测试特征维度：{x_test.shape}")
+        log.info(f"测试标签维度：{y_test.shape}")
         test_len = x_test.shape[0]
         log.info(f"测试特征维度：{x_test.shape}")
         log.info(f"测试标签维度：{y_test.shape}")
@@ -299,37 +344,47 @@ class TrainService:
         """
         m_args = model_args[self.name]
         
-        # 数据预处理
-        x_train = x_train - 1
-        train_len = x_train.shape[0]
+        # 数据预处理：根据玩法类型决定是否减1
+        # SSQ/QLC 原始数据为 1-16/30，需减1映射到 0-15/29
+        # PL3/PL5/F3D 原始数据为 0-9，已符合要求，无需减1
+        need_offset = self.name in ["ssq", "qlc"]
         
-        if self.name in ["ssq", "qlc"]:
-            # For blue ball SSQ, x_train has shape (batch_size, windows_size, 1) currently from create_data
-            # Let's use reshape to safely flatten the last dimensions
+        if need_offset:
+            x_train = x_train - 1
+            # For blue ball SSQ/QLC, x_train has shape (batch_size, windows_size, 1)
+            # Reshape to flatten the last dimensions
+            train_len = x_train.shape[0]
             x_train = x_train.reshape((train_len, m_args["model_args"]["windows_size"]))
-            # y_train originally shape is (train_len, 1), so flatten it first
+            # y_train originally shape is (train_len, 1), flatten and convert to one-hot
             y_train = y_train.flatten()
             y_train = tf.keras.utils.to_categorical(
                 y_train - 1, num_classes=m_args["model_args"]["blue_n_class"]
             )
         else:
-            y_train = y_train - 1
+            # PL3/PL5/F3D: 无需偏移，直接使用原始数据
+            x_train = x_train
+            y_train = y_train  # 保持形状 (batch, sequence_len)
+            train_len = x_train.shape[0]
+            train_len = x_train.shape[0]
         
         log.info(f"训练特征维度：{x_train.shape}")
         log.info(f"训练标签维度：{y_train.shape}")
         
-        x_test = x_test - 1
-        test_len = x_test.shape[0]
-        
-        if self.name in ["ssq", "qlc"]:
+        if need_offset:
+            x_test = x_test - 1
+            test_len = x_test.shape[0]
             x_test = x_test.reshape((test_len, m_args["model_args"]["windows_size"]))
-            # y_test originally shape is (test_len, 1), so flatten it first
             y_test = y_test.flatten()
             y_test = tf.keras.utils.to_categorical(
                 y_test - 1, num_classes=m_args["model_args"]["blue_n_class"]
             )
         else:
-            y_test = y_test - 1
+            x_test = x_test
+            y_test = y_test
+            test_len = x_test.shape[0]
+        
+        log.info(f"测试特征维度：{x_test.shape}")
+        log.info(f"测试标签维度：{y_test.shape}")
         
         log.info(f"测试特征维度：{x_test.shape}")
         log.info(f"测试标签维度：{y_test.shape}")
@@ -492,7 +547,7 @@ class TrainService:
         os.makedirs(model_path_str, exist_ok=True)
         model_name = f"{ball_type}_ball_model"
         save_path = os.path.join(model_path_str, f"{model_name}.{extension}")
-        saver.save(sess, save_path, write_meta_graph=False)
+        saver.save(sess, save_path, write_meta_graph=True)
         log.info(f"已保存{ball_type}球模型")
     
     def _evaluate_model(

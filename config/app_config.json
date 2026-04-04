@@ -1,0 +1,16 @@
+{
+  "theme": "light",
+  "auto_update": true,
+  "data_sources": {
+    "primary": "cwl",
+    "fallback": "500"
+  },
+  "prediction": {
+    "default_strategy": "XGBoost梯度提升",
+    "confidence_threshold": 0.7
+  },
+  "notifications": {
+    "enabled": true,
+    "sound": false
+  }
+}
